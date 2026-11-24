@@ -58,6 +58,9 @@ async def test_legacy_accounts_survive_save_and_reload(tmp_path, legacy_children
     assert scripts[sid].users[first].Info.Base == "independent"
     assert scripts[sid].Run.AccountSwitchMethod == "BGI"
     assert scripts[sid].users[first].Info.IfQuickConfig
+    assert scripts[sid].users[first].info.config_path == str(
+        tmp_path / "data" / sid / first
+    )
     assert scripts[sid].info.name == "原托管"
     config_manager.unregister_root(scripts)
     restored = ConfigCollection.build([BetterGIConfig])

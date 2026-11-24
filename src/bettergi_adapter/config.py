@@ -289,6 +289,7 @@ class BetterGIUserConfig(UserEntry):
             return str(exc)
 
     class Metadata(UserEntry.Info):
+        config_path: Virtual[str] = None
         name: Virtual[str] = None
         enabled: Virtual[bool] = None
 
@@ -297,6 +298,17 @@ class BetterGIUserConfig(UserEntry):
     @virtual_field("info.name")
     def plugin_name(self):
         return self.Info.Name
+
+    @virtual_field("info.config_path")
+    def plugin_config_path(self):
+        """账号编辑目录恒按托管和账号分桶。"""
+        from auto_mas_core import Config
+
+        users = self.parent
+        script = users.parent if users is not None else None
+        if not isinstance(script, BetterGIConfig):
+            return ""
+        return str(Config.data_path / str(script.uid) / str(self.uid))
 
     @virtual_field("info.enabled")
     def plugin_enabled(self):

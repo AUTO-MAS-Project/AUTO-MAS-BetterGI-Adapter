@@ -167,7 +167,10 @@ class BetterGIExpander(UserExpander):
 
     async def finish(self):
         try:
-            if self.task_info.mode == TaskMode.AUTO_PROXY and self._ran_account:
+            if self.task_info.mode == TaskMode.AUTO_PROXY and (
+                self._ran_account
+                or any(user.status == "跳过" for user in self.script_info.user_list)
+            ):
                 await config_manager.flush()
                 users = self.script_info.user_list
                 completed = sum(user.status in ("完成", "部分失败") for user in users)

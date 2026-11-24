@@ -373,6 +373,7 @@ class AutoProxyTask(AutoProxyWorker):
         self.cur_user_config = config
         self.push_log_mode = config.Notify.PushLogMode
         self.push_log = []
+        self._log_progress = {}
         self._ready = False
         self._user_scripts_started = False
         # 配置来源决定「谁拥有本次运行的配置」：原生来源 = 用 BGI 所选原生配置，MAS 不接管
@@ -1024,8 +1025,23 @@ class AutoProxyTask(AutoProxyWorker):
     async def main_logic(self):
         self._ready = True
         deadline = asyncio.timeout(self.script_config.Run.HardTimeLimit * 60)
-        async with deadline:
-            await self.run_account()
+        try:
+            async with deadline:
+                await self.run_account()
+        except TimeoutError:
+            if not deadline.expired():
+                raise
+            message = f"运行超过 {self.script_config.Run.HardTimeLimit:g} 分钟，已终止"
+            await self.cur_user_item.set_state(status="异常")
+            record = self.cur_user_log
+            if record is None:
+                record = await self.cur_user_item.add_log_record(
+                    datetime.now().astimezone(), LogRecord()
+                )
+            await record.set_state(status=message)
+            await record.append_content(message)
+            await self.script_info.set_log(f"{message}\n正在中止相关程序")
+            logger.warning(message)
 
     async def run_account(self):
         await self.prepare()
@@ -1895,6 +1911,17 @@ class AutoProxyTask(AutoProxyWorker):
         )
         await self._push_dispatch_log("原神已拉起，等待窗口就绪...")
         return game_exe
+
+    def is_log_stalled(
+        self, latest_time: datetime, minutes: int, key: str = "default"
+    ) -> bool:
+        """同一阶段的日志时间戳持续不变达到阈值时结束本轮。"""
+        now = time.monotonic()
+        previous, since = self._log_progress.get(key, (None, now))
+        if previous != latest_time:
+            since = now
+        self._log_progress[key] = (latest_time, since)
+        return now - since > minutes * 60
 
     async def check_log(self, log_content: list[str], latest_time: datetime) -> None:
         """按内置日志判定结果，未见成功日志便退出则视为异常。"""
