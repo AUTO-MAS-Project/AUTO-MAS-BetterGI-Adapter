@@ -56,6 +56,11 @@ class BetterGIExpander(UserExpander):
         self._reports = {}
         self.begin_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    def can_run_user(self, entry):
+        return super().can_run_user(entry) and (
+            self.task_info.mode != TaskMode.AUTO_PROXY or entry.Info.RemainedDay != 0
+        )
+
     async def prepare(self):
         root = self.script_config.Info.RootPath
         if self.task_info.mode != TaskMode.AUTO_PROXY and not self.maintenance:
