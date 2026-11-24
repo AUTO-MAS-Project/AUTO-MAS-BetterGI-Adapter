@@ -264,6 +264,7 @@ logger = get_logger("托管管理 API")
     summary="获取 BetterGI 自动战斗策略选项",
     response_model=ComboBoxOut,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def get_bettergi_strategies_api(scriptId: str) -> ComboBoxOut:
     """返回 BetterGI 可用自动战斗策略：内置「根据队伍自动选择」+ ``{RootPath}/User/AutoFight/*.txt``、``*.json`` 文件名。"""
@@ -299,6 +300,7 @@ async def get_bettergi_strategies_api(scriptId: str) -> ComboBoxOut:
     summary="获取 BetterGI 一条龙自定义配置组",
     response_model=BetterGICustomGroupsOut,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def get_bettergi_custom_groups_api(
     scriptId: str, userId: str = "", configName: str = "", useMasConfig: bool = False
@@ -346,6 +348,7 @@ async def get_bettergi_custom_groups_api(
     summary="获取 BetterGI 一条龙配置名列表",
     response_model=ComboBoxOut,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def get_bettergi_one_dragon_configs_api(scriptId: str) -> ComboBoxOut:
     """返回 BetterGI 可选一条龙配置名：{RootPath}/User/OneDragon/*.json 文件名（默认配置置顶）。"""
@@ -381,6 +384,7 @@ async def get_bettergi_one_dragon_configs_api(scriptId: str) -> ComboBoxOut:
     summary="获取 BetterGI 可用自定义 JS 脚本列表",
     response_model=ComboBoxOut,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def get_bettergi_js_scripts_api(scriptId: str) -> ComboBoxOut:
     """返回 BetterGI 可执行自定义 JS 脚本候选。
@@ -422,6 +426,7 @@ async def get_bettergi_js_scripts_api(scriptId: str) -> ComboBoxOut:
     summary="获取 BetterGI 可用键鼠脚本（录制）列表",
     response_model=ComboBoxOut,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def get_bettergi_key_mouse_scripts_api(scriptId: str) -> ComboBoxOut:
     """返回 BetterGI 键鼠脚本（录制）候选。
@@ -458,6 +463,7 @@ async def get_bettergi_key_mouse_scripts_api(scriptId: str) -> ComboBoxOut:
     summary="获取 BetterGI 可用配置组列表",
     response_model=ComboBoxOut,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def get_bettergi_script_groups_api(
     scriptId: str, userId: str = ""
@@ -504,6 +510,7 @@ async def get_bettergi_script_groups_api(
     summary="获取 BetterGI 配置组 json 详情（per-user 副本优先）",
     response_model=BetterGIScriptGroupDetailOut,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def get_bettergi_script_group_detail_api(
     scriptId: str, userId: str, name: str
@@ -551,6 +558,7 @@ async def get_bettergi_script_group_detail_api(
     summary="获取 BetterGI 某 JsScript 脚本目录的 settings.json UI 定义",
     response_model=BetterGIScriptSettingsUiOut,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def get_bettergi_script_settings_ui_api(
     scriptId: str, folder: str
@@ -590,6 +598,7 @@ async def get_bettergi_script_settings_ui_api(
     summary="获取 BetterGI 某 JsScript 脚本目录的 README 内容",
     response_model=BetterGIScriptReadmeOut,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def get_bettergi_script_readme_api(
     scriptId: str, folder: str
@@ -677,6 +686,7 @@ async def get_bettergi_script_dirs_api(scriptId: str) -> BetterGIScriptDirsOut:
     summary="获取 BetterGI 地图追踪目录树",
     response_model=BetterGIPathingTreeOut,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def get_bettergi_auto_pathing_tree_api(scriptId: str) -> BetterGIPathingTreeOut:
     """返回 BetterGI 地图追踪目录树：{RootPath}/User/AutoPathing 的递归结构。
@@ -717,6 +727,7 @@ async def get_bettergi_auto_pathing_tree_api(scriptId: str) -> BetterGIPathingTr
     summary="获取 BetterGI 一条龙设置项（右栏按任务分组展示）",
     response_model=BetterGIOneDragonSettingsOut,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def get_bettergi_one_dragon_settings_api(
     scriptId: str, userId: str, configName: str = "", groupName: str = ""
@@ -760,6 +771,7 @@ async def get_bettergi_one_dragon_settings_api(
     summary="保存 BetterGI 一条龙设置项到 per-user 副本",
     response_model=OutBase,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def save_bettergi_one_dragon_settings_api(
     req: BetterGIOneDragonSettingsIn = Body(...),
@@ -800,6 +812,7 @@ async def save_bettergi_one_dragon_settings_api(
     summary="设置一条龙 Plan 某步骤的启用状态（按实例名，支持 基名-后缀）",
     response_model=OutBase,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def set_one_dragon_plan_step_enabled(
     scriptId: str = Query(...),
@@ -1048,6 +1061,7 @@ async def get_bettergi_domain_catalog_api(
     summary="保存 BetterGI 配置组 json 到 per-user 副本",
     response_model=OutBase,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def save_bettergi_script_group_api(
     req: BetterGIScriptGroupSaveIn = Body(...),
@@ -1097,6 +1111,7 @@ async def save_bettergi_script_group_api(
     summary="获取游戏客户端信息（路径 + 渠道，账号页透传展示）",
     response_model=BetterGIGameInfoOut,
     status_code=200,
+    openapi_extra={"x-auto-mas-mcp": True},
 )
 async def get_bettergi_game_info_api(
     scriptId: str, detectPath: str = ""
