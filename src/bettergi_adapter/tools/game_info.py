@@ -36,6 +36,7 @@
 键值属上游私有格式，只透传读写、不建平行模型；读取走严格解析（响亮失败）。
 """
 
+import re
 from pathlib import Path
 
 import psutil
@@ -56,6 +57,15 @@ CHANNEL_BILIBILI = "B服"
 CHANNEL_GLOBAL = "国际服"
 
 
+def _require_local_client(path: Path) -> None:
+    text = str(path).replace("\\", "/")
+    # Windows 的扩展盘符路径仍指向本机；其余网络或设备命名空间不用于游戏探测。
+    if text.startswith("/??/") or (
+        is_unc_path(text) and not re.match(r"^//\?/[A-Za-z]:/", text)
+    ):
+        raise ValueError("游戏客户端必须使用本机路径")
+
+
 def detect_channel(game_exe: Path) -> str | None:
     """识别游戏客户端渠道，返回 官服 / B服 / 国际服，无法识别返回 None。
 
@@ -63,8 +73,7 @@ def detect_channel(game_exe: Path) -> str | None:
     - ``YuanShen.exe`` 读安装目录 ``config.ini`` 的 ``[General]``：
       ``cps`` 含 ``bilibili`` 或 ``channel=14`` → B服；``channel=1`` → 官服。
     """
-    if is_unc_path(str(game_exe)):
-        raise ValueError("游戏客户端必须使用本机路径")
+    _require_local_client(game_exe)
     name = game_exe.name.casefold()
     if name == "genshinimpact.exe":
         return CHANNEL_GLOBAL
@@ -158,8 +167,7 @@ def resolve_game_exe(root_path: Path, user_game_path: str = "") -> Path:
                 "genshinStartConfig.installPath），请先在 BetterGI 设置中配置游戏路径"
             )
         game_exe = Path(install_path)
-    if is_unc_path(str(game_exe)):
-        raise ValueError("游戏客户端必须使用本机路径")
+    _require_local_client(game_exe)
     if not game_exe.is_file():
         raise RuntimeError(
             f"游戏路径不存在: {game_exe}，请检查 BetterGI 设置或该账号的游戏客户端配置"

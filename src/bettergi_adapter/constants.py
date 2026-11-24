@@ -2,6 +2,8 @@
 
 from copy import deepcopy
 
+ACCOUNT_SWITCH_GROUP = "MAS切换账号"
+
 _BGI_BUILTIN_ONE_DRAGON_GROUPS = [
     "领取邮件",
     "合成树脂",

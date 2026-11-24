@@ -54,6 +54,7 @@ class BetterGIExpander(UserExpander):
         self._update_root = None
         self._ran_account = False
         self._reports = {}
+        self._failed_execution_users = set()
         self.begin_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     def can_run_user(self, entry):
@@ -111,6 +112,8 @@ class BetterGIExpander(UserExpander):
             try:
                 await super().spawn(child)
             finally:
+                if child.execution_failure_summary:
+                    self._failed_execution_users.add(child.user_info.uid)
                 self._reports[child.user_info.uid] = (
                     child.push_log_mode,
                     child.push_log,
@@ -178,7 +181,11 @@ class BetterGIExpander(UserExpander):
             ):
                 await config_manager.flush()
                 users = self.script_info.user_list
-                completed = sum(user.status in ("完成", "部分失败") for user in users)
+                completed = sum(
+                    user.status in ("完成", "部分失败")
+                    and user.uid not in self._failed_execution_users
+                    for user in users
+                )
                 failed = (
                     len(users)
                     - completed

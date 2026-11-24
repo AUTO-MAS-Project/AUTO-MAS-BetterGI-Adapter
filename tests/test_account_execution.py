@@ -257,7 +257,7 @@ def test_daily_team_lookup_uses_daily_domain(flag):
     )
 
 
-async def test_execution_failure_with_completed_daily_does_not_charge_account():
+async def test_execution_failure_keeps_completed_daily_count_and_partial_status():
     worker = object.__new__(AutoProxyTask)
     worker.cur_user_config = SimpleNamespace(
         Data=SimpleNamespace(ProxyTimes=0, LastProxyStatus=""),
@@ -271,8 +271,8 @@ async def test_execution_failure_with_completed_daily_does_not_charge_account():
     await worker._persist_user_run_result()
     worker.cur_user_item.set_state.assert_awaited_once_with(status="部分失败")
     assert worker.cur_user_config.Data.LastProxyStatus == "失败"
-    assert worker.cur_user_config.Data.ProxyTimes == 0
-    assert worker.cur_user_config.Info.RemainedDay == 2
+    assert worker.cur_user_config.Data.ProxyTimes == 1
+    assert worker.cur_user_config.Info.RemainedDay == 1
 
 
 def test_restore_stygian_copy():
@@ -317,3 +317,87 @@ def test_channel_detection_requires_local_client(tmp_path, monkeypatch):
         game_info.detect_channel(Path(remote))
     with pytest.raises(ValueError, match="本机"):
         game_info.resolve_game_exe(tmp_path, remote)
+
+
+def test_extended_drive_path_is_a_local_game_client():
+    from pathlib import PureWindowsPath
+
+    from bettergi_adapter.tools import game_info
+
+    assert (
+        game_info.detect_channel(PureWindowsPath("//?/C:/Games/GenshinImpact.exe"))
+        == game_info.CHANNEL_GLOBAL
+    )
+
+
+def test_switch_group_is_private_to_account_switching(tmp_path):
+    sid, uid = str(uuid4()), str(uuid4())
+    reserved = account_switch.GROUP_NAME
+    directory = tmp_path / "User" / "ScriptGroup"
+    directory.mkdir(parents=True)
+    (directory / f"{reserved}.json").write_text('{"name":"reserved"}', encoding="utf-8")
+    (directory / "regular.json").write_text('{"name":"regular"}', encoding="utf-8")
+    assert one_dragon.list_script_groups(tmp_path) == ["regular"]
+    assert (
+        one_dragon.read_user_script_group(tmp_path, sid, uid, "regular")["name"]
+        == "regular"
+    )
+    assert one_dragon.read_user_script_group(tmp_path, sid, uid, reserved.lower()) == {}
+    with pytest.raises(ValueError, match="临时管理"):
+        one_dragon.write_user_script_group(tmp_path, sid, uid, reserved, {})
+
+
+async def test_whole_phase_failure_reaches_global_report(monkeypatch):
+    from contextlib import ExitStack
+
+    from bettergi_adapter import manager
+
+    failed, warning = uuid4(), uuid4()
+    expander = object.__new__(manager.BetterGIExpander)
+    expander.task_info = SimpleNamespace(mode=manager.TaskMode.AUTO_PROXY)
+    expander._ran_account = True
+    expander._failed_execution_users = {failed}
+    expander._update_root = None
+    expander.begin_time = "2026-01-01 12:00:00"
+    expander._install_access = ExitStack()
+    expander.script_info = SimpleNamespace(
+        name="test",
+        user_list=[
+            SimpleNamespace(uid=uid, status="部分失败") for uid in (failed, warning)
+        ],
+    )
+    expander._render_user_results = lambda **kwargs: ""
+    send = AsyncMock()
+    monkeypatch.setattr(manager.Notify, "push_proxy_result", send)
+    await expander.finish()
+    report = send.await_args.kwargs["report"]
+    assert (report.completed_count, report.uncompleted_count) == (1, 1)
+
+
+def test_group_editor_limits_fields_and_keeps_upstream_extensions(
+    tmp_path, monkeypatch
+):
+    from bettergi_adapter import api_service
+
+    sid, uid = str(uuid4()), str(uuid4())
+    monkeypatch.setattr(api_service, "_bettergi_script_config", lambda sid: None)
+    monkeypatch.setattr(api_service, "_bettergi_user_id", lambda *args: uid)
+    monkeypatch.setattr(api_service, "_bettergi_root", lambda config: tmp_path)
+    directory = tmp_path / "User" / "ScriptGroup"
+    directory.mkdir(parents=True)
+    data = {
+        "name": "regular",
+        "index": 1,
+        "config": {},
+        "projects": [],
+        "upstreamExtension": 42,
+    }
+    (directory / "regular.json").write_text(json.dumps(data), encoding="utf-8")
+    public = api_service.read_script_group(sid, uid, name="regular")
+    assert set(public) == {"name", "index", "config", "projects"}
+    public["index"] = 2
+    target, _ = api_service.save_script_group(sid, uid, name="regular", data=public)
+    assert json.loads(target.read_text(encoding="utf-8")) == {**data, "index": 2}
+    assert (
+        api_service.read_script_group(sid, uid, name=account_switch.GROUP_NAME) is None
+    )

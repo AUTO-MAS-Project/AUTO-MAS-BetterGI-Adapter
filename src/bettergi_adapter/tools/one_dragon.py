@@ -43,7 +43,10 @@ from typing import Any
 from auto_mas_core.host.utils import get_logger
 from auto_mas_core.host.utils import io as _utils_io
 
-from bettergi_adapter.constants import _BGI_BUILTIN_ONE_DRAGON_GROUPS
+from bettergi_adapter.constants import (
+    _BGI_BUILTIN_ONE_DRAGON_GROUPS,
+    ACCOUNT_SWITCH_GROUP,
+)
 from bettergi_adapter.tools.one_dragon_plan import BUILTIN_COMBAT_STEP_NAMES
 
 read_file = _utils_io.read_file
@@ -306,6 +309,10 @@ def list_js_scripts(root: Path) -> list[tuple[str, str]]:
     return items
 
 
+def is_switch_group(name: str) -> bool:
+    return str(name or "").strip().casefold() == ACCOUNT_SWITCH_GROUP.casefold()
+
+
 def list_script_groups(root: Path) -> list[str]:
     """列出 BetterGI 配置组候选：{RootPath}/User/ScriptGroup/*.json 的文件名。
 
@@ -318,7 +325,7 @@ def list_script_groups(root: Path) -> list[str]:
     if sg_dir.is_dir():
         for p in sorted(sg_dir.glob("*.json"), key=lambda p: p.stem):
             name = p.stem.strip()
-            if name and name not in names:
+            if name and not is_switch_group(name) and name not in names:
                 names.append(name)
     return names
 
@@ -348,10 +355,12 @@ def read_script_group(root: Path, name: str) -> dict[str, Any]:
     文件不存在或非法时返回空 dict；名字含路径分隔符（路径类引用）同样返回空 dict，
     不抛「配置组名非法」——读路径对用户操作必须容错（见 is_file_safe_script_group_name）。
     """
-    if not is_file_safe_script_group_name(name):
+    if not is_file_safe_script_group_name(name) or is_switch_group(name):
         return {}
     sg_dir = root / _SCRIPT_GROUP_REL_DIR
     path = sg_dir / f"{resolve_script_group_name(name)}.json"
+    if path.resolve() == (sg_dir / f"{ACCOUNT_SWITCH_GROUP}.json").resolve():
+        return {}
     data = read_file(path)
     return data if isinstance(data, dict) else {}
 
@@ -361,7 +370,7 @@ def resolve_script_group_name(name: str) -> str:
     name = (name or "").strip()
     if not name:
         raise ValueError("配置组名不能为空")
-    if any(c in name for c in ("/", "\\", "..")):
+    if any(c in name for c in ("/", "\\", ":", "..")):
         raise ValueError(f"配置组名非法: {name!r}")
     return name
 
@@ -376,7 +385,7 @@ def is_file_safe_script_group_name(name: str) -> bool:
     真正的落盘写入仍走 ``resolve_script_group_name`` 的严格校验，防路径穿越。
     """
     cleaned = (name or "").strip()
-    return bool(cleaned) and not any(c in cleaned for c in ("/", "\\", ".."))
+    return bool(cleaned) and not any(c in cleaned for c in ("/", "\\", ":", ".."))
 
 
 # 路径类引用（AutoPathing 路线名等含 ``/`` 的名字）不能作文件名，但右栏「添加脚本」会把
@@ -646,7 +655,12 @@ def list_user_script_group_names(script_id: str, user_id: str) -> list[str]:
             name = p.stem.strip()
             # 路径类引用的别名副本（见 per_user_copy_name）不是「可编辑配置组」本身：
             # 它归属某条「路径」引用，不该作为新配置组出现在候选列表里。
-            if name and not name.startswith(_PATH_COPY_PREFIX) and name not in names:
+            if (
+                name
+                and not is_switch_group(name)
+                and not name.startswith(_PATH_COPY_PREFIX)
+                and name not in names
+            ):
                 names.append(name)
     # 多实例副本（「组名-{uid}」）不是独立配置组：仅当基名也在列表中才隐藏，
     # 避免它们混进「可编辑配置组 / 添加候选」被当成新组重复加入队列。
@@ -689,6 +703,8 @@ def read_user_script_group(
     # 会命中，抛错会直接把 ValueError 弹给用户（2026-09-16 实机）。
     # 内容来源：用户在右栏给该「路径」项加了脚本时，副本落在确定性别名上（见
     # per_user_copy_name），有则以它为准；没有则返回空，由右栏按路径文件合成单项目展示。
+    if is_switch_group(name):
+        return {}
     if not is_file_safe_script_group_name(name):
         alias_copy = _read_per_user_copy(script_id, user_id, name)
         return alias_copy if isinstance(alias_copy, dict) else {}
@@ -725,6 +741,8 @@ def write_user_script_group(
     ``data/{script}/{user}/ScriptGroup/``，BGI 的 ``User/ScriptGroup`` 零接触。
     名为空返回 ``None``（无可写内容），也不把「配置组名非法」弹给用户。
     """
+    if is_switch_group(name):
+        raise ValueError("切号配置组由 MAS 临时管理")
     if not str(name or "").strip():
         return None
     name = per_user_copy_name(name)

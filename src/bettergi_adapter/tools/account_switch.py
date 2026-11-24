@@ -47,12 +47,14 @@ from typing import Any
 from auto_mas_core.host.utils import get_logger
 from auto_mas_core.host.utils import io as _utils_io
 
+from bettergi_adapter.constants import ACCOUNT_SWITCH_GROUP
+
 from .one_dragon import GLOBAL_CONFIG_LOCK
 
 logger = get_logger("BetterGI 切换账号")
 
 # 生成并执行的配置组名称（同时作为文件名与 --startGroups 的组名）
-GROUP_NAME = "MAS切换账号"
+GROUP_NAME = ACCOUNT_SWITCH_GROUP
 
 # 与 BetterGI 项目结构固定的相对路径（从 RootPath 派生）
 _JS_SCRIPT_REL_DIR = Path("User") / "JsScript"

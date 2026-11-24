@@ -251,6 +251,10 @@ def list_script_groups(script_id: str, user_id: str = "") -> list[str]:
     return names
 
 
+# 编辑页显示这四个 BetterGI 配置组字段；未公开的上游扩展字段在写回时保留。
+_GROUP_EDITOR_FIELDS = ("name", "index", "config", "projects")
+
+
 def read_script_group(script_id: str, user_id: str, *, name: str) -> dict | None:
     script_config = _bettergi_script_config(script_id)
     _bettergi_user_id(script_config, user_id)
@@ -258,7 +262,9 @@ def read_script_group(script_id: str, user_id: str, *, name: str) -> dict | None
     from bettergi_adapter.tools import one_dragon
 
     data = one_dragon.read_user_script_group(root, script_id, user_id, name)
-    return data
+    if not data or one_dragon.is_switch_group(data.get("name", "")):
+        return None
+    return {key: data[key] for key in _GROUP_EDITOR_FIELDS if key in data}
 
 
 def read_script_settings_ui(script_id: str, folder: str) -> list[dict[str, Any]]:
@@ -488,7 +494,17 @@ def save_script_group(
     projects = (data or {}).get("projects")
     if not isinstance(projects, list):
         raise ValueError("projects 必须为数组（按执行顺序的项目列表）")
-    out = one_dragon.write_user_script_group(root, script_id, user_id, name, data)
+    existing = one_dragon.read_user_script_group(root, script_id, user_id, name)
+    if one_dragon.is_switch_group(name) or one_dragon.is_switch_group(
+        existing.get("name", "")
+    ):
+        raise ValueError("切号配置组由 MAS 临时管理")
+    preserved = {
+        key: value for key, value in existing.items() if key not in _GROUP_EDITOR_FIELDS
+    }
+    out = one_dragon.write_user_script_group(
+        root, script_id, user_id, name, {**preserved, **data}
+    )
     return (out, len(projects))
 
 

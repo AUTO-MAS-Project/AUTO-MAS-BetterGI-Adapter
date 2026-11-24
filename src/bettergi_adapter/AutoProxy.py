@@ -366,6 +366,7 @@ class AutoProxyTask(AutoProxyWorker):
 
     def __init__(self, expander, user, config):
         super().__init__(expander, user, config)
+        self.execution_failure_summary = ""
         self.script_config = expander.script_config
         self.history = expander.history
         self.cur_user_item = user
@@ -690,7 +691,6 @@ class AutoProxyTask(AutoProxyWorker):
         self.exec_group_names: list[str] = []
         # 执行层「部分失败」的步数：单步失败已跳过继续、不判负，但状态/通知要标出来
         self.partial_failed_steps = 0
-        self.execution_failure_summary = ""
         self.warning_steps = 0
 
     def _resolve_log_file_path(self) -> Path:
@@ -2234,12 +2234,6 @@ class AutoProxyTask(AutoProxyWorker):
         if self.cur_user_config is None:
             return
 
-        if self.run_complete and self.execution_failure_summary:
-            self.cur_user_config.Data.LastProxyStatus = "失败"
-            await self.cur_user_config.commit()
-            await self.cur_user_item.set_state(status="部分失败")
-            return
-
         if self.run_complete:
             if (
                 self.cur_user_config.Data.ProxyTimes == 0
@@ -2253,8 +2247,14 @@ class AutoProxyTask(AutoProxyWorker):
                 self.cur_user_config.Data.ProxyTimes + 1
             )
             await self.cur_user_config.commit()
-            self.cur_user_config.Data.LastProxyStatus = "成功"
+            self.cur_user_config.Data.LastProxyStatus = (
+                "失败" if self.execution_failure_summary else "成功"
+            )
             await self.cur_user_config.commit()
+            if self.execution_failure_summary:
+                await self.cur_user_item.set_state(status="部分失败")
+                logger.warning(f"一条龙日常已完成；{self.execution_failure_summary}")
+                return
             # 与上游整体结果一致；分步问题不升级为整条失败，也不触发失败重试/推送。
             await self.cur_user_item.set_state(
                 status="部分失败" if self.partial_failed_steps else "完成"
