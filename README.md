@@ -4,6 +4,6 @@
 
 # AUTO-MAS BetterGI Adapter
 
-从配套版本的 AUTO-MAS 插件中心安装并启用 BetterGI。已有托管由宿主在升级时识别，沿用原账号、队列和配置目录。新建托管时选择 BetterGI 安装目录，然后在账号页设置原神客户端及一条龙。
+需要高于 5.9.0 且已接入 BetterGI 插件的 AUTO-MAS 5.x 宿主。从插件中心安装并启用 BetterGI。已有托管由宿主在升级时识别，沿用原账号、队列和配置目录。新建托管时选择 BetterGI 安装目录，然后在账号页设置原神客户端及一条龙。
 
 发布标签与包版本一致时，GitHub Actions 在 `pypi` 环境构建并发布 `auto-mas-bettergi-adapter`。

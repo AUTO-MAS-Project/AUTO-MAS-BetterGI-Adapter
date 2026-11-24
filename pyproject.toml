@@ -12,7 +12,7 @@ license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "AUTO-MAS Team" }]
 keywords = ["auto-mas-plugin", "auto-mas-id:bettergi_adapter"]
-dependencies = ["auto-mas-core>=5.9.0b1,<6"]
+dependencies = ["auto-mas-core>5.9.0,<6"]
 
 [project.urls]
 Changelog = "https://github.com/AUTO-MAS-Project/AUTO-MAS-BetterGI-Adapter/blob/dev/CHANGELOG.md"
