@@ -156,8 +156,9 @@ function isAbsoluteStrategyPath(value) {
 // 抽出来供必填校验复用，避免「校验用一套、执行用另一套」而误报或漏报。
 function domainNameOf(step) {
   const s = step.settings || {};
+  if (!domainWeeklyEnabled(step)) return s.domainName;
   const wd = s.weeklyDomain || {};
-  const todayRow = (domainWeeklyEnabled(step) && wd[runDayKey]) || {};
+  const todayRow = wd[runDayKey] || {};
   return todayRow.domainName || (wd.default || {}).domainName || s.domainName;
 }
 
@@ -213,10 +214,10 @@ async function dispatchCombat(step) {
       // 每周配置由 MAS 托管：按今天星期从 settings.weeklyDomain 取对应行（回退 default）。
       // 关闭「每周秘境」时只走每日行；奖励档位同理，每周走 default.reward（每周表默认行），
       // 走每日则用 sundaySelectedValue（每日行），两者不可混用。
-      const wd = s.weeklyDomain || {};
-      const defaultRow = wd.default || {};
       const useWeekly = domainWeeklyEnabled(step);
-      const todayRow = (useWeekly && wd[runDayKey]) || {};
+      const wd = (useWeekly && s.weeklyDomain) || {};
+      const defaultRow = wd.default || {};
+      const todayRow = wd[runDayKey] || {};
       // 队伍配置表「战斗场景」选队结果优先级最高（压过每周行与步骤级），见后端 team_resolver.py
       const partyName = s.masTeamOverride || todayRow.partyName || defaultRow.partyName || s.partyName;
       // 与必填校验同口径（见 domainNameOf），避免两处漂移

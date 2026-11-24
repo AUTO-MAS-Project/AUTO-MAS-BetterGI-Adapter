@@ -116,9 +116,11 @@ def _as_dict(value: Any) -> dict[str, Any]:
 
 def _resolve_domain_name(settings: dict[str, Any], day_key: str) -> str:
     """还原秘境步骤本次实际执行的秘境名（对齐 main.js 取值链）。"""
+    flag = settings.get("weeklyDomainEnabled")
+    if flag is False or flag == "false":
+        return _clean(settings.get("domainName"))
     weekly = _as_dict(settings.get("weeklyDomain"))
-    use_weekly = settings.get("weeklyDomainEnabled") is not False
-    today = _as_dict(weekly.get(day_key)) if use_weekly else {}
+    today = _as_dict(weekly.get(day_key))
     default = _as_dict(weekly.get("default"))
     return (
         _clean(today.get("domainName"))

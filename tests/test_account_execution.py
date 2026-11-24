@@ -140,6 +140,12 @@ def test_materialized_queue_preserves_switches_and_instance_copies(tmp_path, man
         ]
         assert projects == [name, "Example-2"]
 
+    worker.one_dragon_queue = [worker.one_dragon_queue[1]]
+    worker._write_one_dragon_config()
+    config = one_dragon.load_one_dragon(tmp_path, one_dragon.launch_slot_name())
+    assert "Example-2" not in config["TaskDefinitions"].values()
+    assert "MasDisabledExecutionGroups" not in config
+
 
 @pytest.mark.parametrize("value", [None, {}, {"TaskEnabledList": []}])
 def test_unreadable_native_plan_cannot_report_an_empty_run(tmp_path, value):
@@ -154,3 +160,98 @@ def test_unreadable_native_plan_cannot_report_an_empty_run(tmp_path, value):
         worker._native_one_dragon_has_tasks()
     one_dragon.write_file(path, {"TaskEnabledList": {}})
     assert worker._native_one_dragon_has_tasks() is False
+
+
+@pytest.mark.parametrize("method", ["MAS", "BGI"])
+async def test_bound_client_starts_without_login(method, monkeypatch):
+    mod = importlib.import_module("bettergi_adapter.AutoProxy")
+    monkeypatch.setattr(mod, "client_executable_path", lambda user: "bound-game.exe")
+    worker = object.__new__(AutoProxyTask)
+    worker.script_config = SimpleNamespace(
+        Run=SimpleNamespace(AccountSwitchMethod=method)
+    )
+    worker.cur_user_config = SimpleNamespace(Info=SimpleNamespace(Id=""))
+    worker._ensure_user_game_running = AsyncMock()
+    assert await worker._switch_account()
+    worker._ensure_user_game_running.assert_awaited_once_with("bound-game.exe")
+
+
+async def test_fatal_log_wins_over_group_end(monkeypatch):
+    mod = importlib.import_module("bettergi_adapter.AutoProxy")
+
+    class Monitor:
+        def __init__(self, time_range, time_format, callback):
+            self.callback = callback
+
+        async def start_monitor_file(self, path, start):
+            await self.callback(
+                ["MAS_PLAN_FAIL: test", '配置组 "group" 执行结束'], start
+            )
+
+        async def stop(self):
+            pass
+
+    monkeypatch.setattr(mod, "LogMonitor", Monitor)
+    monkeypatch.setattr(mod, "point", lambda *args: None)
+    log = SimpleNamespace(set_state=AsyncMock(), content=[])
+    worker = object.__new__(AutoProxyTask)
+    worker.exec_group_names = ["group"]
+    worker.cur_user_item = SimpleNamespace(
+        name="test", add_log_record=AsyncMock(return_value=log)
+    )
+    worker.script_exe_path = "BetterGI.exe"
+    worker.script_target_process_info = None
+    worker.script_config = SimpleNamespace(Run=SimpleNamespace(UseAdmin=False))
+    worker.log_time_range = worker.log_time_format = None
+    worker.kill_managed_process = AsyncMock(return_value=True)
+    worker.bettergi_process_manager = SimpleNamespace(open_process=AsyncMock())
+    worker._push_dispatch_log = AsyncMock()
+    assert not await worker._run_execution_layer()
+    assert "致命" in log.set_state.await_args.kwargs["status"]
+
+
+@pytest.mark.parametrize("submit_plan", [False, True])
+def test_queue_update_keeps_submitted_plan_edits(tmp_path, submit_plan):
+    from bettergi_adapter.api_service import prepare_user_update
+
+    script = SimpleNamespace(uid=uuid4(), Info=SimpleNamespace(RootPath=str(tmp_path)))
+    old = [
+        {"uid": "domain", "name": "自动秘境", "settings": {"domainName": "old"}},
+        {"uid": "boss", "name": "自动首领讨伐", "settings": {}},
+    ]
+
+    def plan(steps):
+        return json.dumps({"version": 1, "steps": steps}, ensure_ascii=False)
+
+    user = SimpleNamespace(
+        uid=uuid4(), OneDragon=SimpleNamespace(Plan=plan(old), Groups=[])
+    )
+    od = {
+        "Queue": json.dumps(
+            [{"name": "自动秘境", "planUid": "domain"}], ensure_ascii=False
+        ),
+    }
+    if submit_plan:
+        od["Plan"] = plan([{**old[0], "settings": {"domainName": "new"}}, old[1]])
+    prepare_user_update(script, user, data={"OneDragon": od})
+    steps = json.loads(od["Plan"])["steps"]
+    assert [(step["uid"], step["settings"]["domainName"]) for step in steps] == [
+        ("domain", "new" if submit_plan else "old")
+    ]
+
+
+@pytest.mark.parametrize("flag", [False, "false"])
+def test_daily_team_lookup_uses_daily_domain(flag):
+    from bettergi_adapter.tools.team_resolver import _resolve_domain_name
+
+    assert (
+        _resolve_domain_name(
+            {
+                "domainName": "daily",
+                "weeklyDomainEnabled": flag,
+                "weeklyDomain": {"default": {"domainName": "weekly"}},
+            },
+            "Monday",
+        )
+        == "daily"
+    )

@@ -1807,19 +1807,30 @@ def write_user_one_dragon(
         # 缓存缺失/为空：以纯内置模板开始（不回退 BGI 实配，实配不是权威源）
         config = load_seed_template()
 
+    # 执行层接管的组不能留在原生任务定义里，否则删掉队列项后会被当成旧任务补回。
+    # 旧队列缺少 enabled；仅在账号副本保留这些组的关闭状态，随下一次编排重算。
+    disabled_groups = config.pop("MasDisabledExecutionGroups", [])
     config, execution_queue = apply_groups(
         config,
         groups,
         custom_groups=custom_groups,
         manage_customs=manage_custom_groups,
         queue=queue,
+        disabled_execution_groups=disabled_groups,
     )
-    # 副本保留完整启停状态，下次运行旧队列仍可读取。仅从运行时槽位排除已交由执行层的任务。
-    # 副本只保存一条龙结构与组开关（不含顶部快捷覆盖，避免清空后残留旧值）
-    write_file(user_path, config)
-    slot_config = (
-        _exclude_tasks(config, exclude_task_names) if exclude_task_names else config
-    )
+    excluded = set(exclude_task_names or ())
+    disabled = [
+        name
+        for row in execution_queue
+        if (name := row.get("step") or row["name"]) in excluded
+        and not row["enabled"]
+        and name not in _BUILTIN_ONE_DRAGON_GROUPS
+    ]
+    slot_config = _exclude_tasks(config, exclude_task_names or [])
+    account_config = dict(slot_config)
+    if disabled:
+        account_config["MasDisabledExecutionGroups"] = disabled
+    write_file(user_path, account_config)
     # 顶部快捷覆盖只作用于运行时槽位：非空才写，留空则槽位维持副本（BetterGI 现有）值
     if daily_reward_party_name:
         slot_config["DailyRewardPartyName"] = daily_reward_party_name
@@ -2759,6 +2770,7 @@ def apply_groups(
     custom_groups: list[dict[str, Any]] | None = None,
     manage_customs: bool = False,
     queue: list[dict[str, Any]] | None = None,
+    disabled_execution_groups: list[str] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """按组名切换一条龙配置的组开关，保留其余设置。
 
@@ -2815,7 +2827,11 @@ def apply_groups(
 
     def _custom_enabled_for(name: str, instance: str = "") -> bool:
         old = old_by_name.get(instance) or old_by_name.get(name)
-        old_on = bool(old[1]) if old else True
+        old_on = (
+            old[1]
+            if old
+            else (instance or name) not in (disabled_execution_groups or ())
+        )
         if manage_customs:
             # 入表按表状态；未入表保持 BetterGI 原启用状态，避免误开用户已关闭的组
             return custom_enabled[name] if name in custom_enabled else old_on

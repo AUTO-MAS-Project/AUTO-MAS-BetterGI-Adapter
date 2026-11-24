@@ -515,8 +515,8 @@ def prepare_user_update(
         try:
             from bettergi_adapter.tools import one_dragon_plan
 
-            plan = uc.OneDragon.Plan or ""
-            groups = uc.OneDragon.Groups or []
+            plan = od.get("Plan", uc.OneDragon.Plan) or ""
+            groups = od.get("Groups", uc.OneDragon.Groups) or []
             new_plan = one_dragon_plan.prune_plan_to_queue(plan, od["Queue"], groups)
             if new_plan != plan:
                 od["Plan"] = new_plan

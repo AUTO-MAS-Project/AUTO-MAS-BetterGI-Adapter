@@ -59,3 +59,34 @@ for (const legacyValue of [false, true]) {
     assert.equal(messages.at(-1), 'MAS_PLAN_DONE')
   })
 }
+
+test('关闭每周秘境后只使用每日秘境、队伍、策略和奖励', async () => {
+  class DomainParam {
+    setCombatStrategyPath(name) { return name }
+  }
+  const calls = []
+  const messages = []
+  await runInNewContext(bridgeSource, {
+    AutoDomainParam: DomainParam,
+    dispatcher: { runAutoDomainTask: async param => { calls.push(param) } },
+    genshin: { returnMainUi: async () => {} },
+    log: { info: line => messages.push(line) },
+    settings: {
+      plan: JSON.stringify({ version: 1, steps: [{
+        uid: 'domain', name: '自动秘境', enabled: true,
+        settings: {
+          weeklyDomainEnabled: false, domainName: 'daily', partyName: 'today',
+          combatStrategyPath: 'daily-strategy', sundaySelectedValue: '0',
+          weeklyDomain: { default: { domainName: 'weekly', partyName: 'old', strategy: 'old', reward: '2' } },
+        },
+      }] }),
+    },
+  })
+  assert.ok(messages.includes('MAS_STEP_DONE: domain 自动秘境'), messages.join('\n'))
+  assert.equal(calls.length, 1)
+  const [param] = calls
+  assert.deepEqual(
+    [param.domainName, param.partyName, param.combatStrategyPath, param.sundaySelectedValue],
+    ['daily', 'today', 'daily-strategy', '0'],
+  )
+})

@@ -1449,15 +1449,15 @@ class AutoProxyTask(AutoProxyWorker):
             for name in group_names:
                 if f'配置组 "{name}" 执行结束' in log:
                     done_groups.add(name)
-            if done_groups >= set(group_names):
+            if any(m in log for m in fail_markers):
+                result["success"] = False
+                failure_reason = "执行层失败（命中致命日志）"
+                done_event.set()
+            elif done_groups >= set(group_names):
                 # 必填配置缺失 → 判负：该步被跳过、任务没跑，若还判成功用户无从得知
                 result["success"] = not missing_config
                 if missing_config:
                     failure_reason = "执行层失败：有任务因必填配置缺失未执行"
-                done_event.set()
-            elif any(m in log for m in fail_markers):
-                result["success"] = False
-                failure_reason = "执行层失败（命中致命日志）"
                 done_event.set()
             elif result["started"] and not await self._bgi_alive():
                 # 按进程名判定：BGI 自提权重启换 PID 不代表执行层已死
@@ -1607,7 +1607,7 @@ class AutoProxyTask(AutoProxyWorker):
           ``_switch_account_mas``）；
         - ``BGI``：走 BetterGI「切换账号多模式」脚本（--startGroups）。
 
-        未配置账号时直接返回 True（无需切换）；失败/超时返回 False，
+        未配置账号时仅启动已绑定的客户端；失败/超时返回 False，
         由调用方决定是否继续执行一条龙。
         """
         # 账号级游戏客户端路径（临时覆盖）：不写 BetterGI 全局配置——installPath
@@ -1616,12 +1616,14 @@ class AutoProxyTask(AutoProxyWorker):
         # 后 BGI attach 运行中的客户端。
         user_game_path = str(client_executable_path(self.cur_user_config) or "").strip()
 
-        if self._account_switch_method() == "MAS":
-            return await self._switch_account_mas(user_game_path)
-
         account = str(self.cur_user_config.Info.Id or "").strip()
+        method = self._account_switch_method()
         if not account:
-            return True
+            return not user_game_path or await self._start_account_game(user_game_path)
+        if method == "MAS":
+            if not await self._start_account_game(user_game_path):
+                return False
+            return await self._switch_account_mas(account)
 
         resource = str(self.cur_user_config.Switch.Resource or "官服").strip()
         uid = str(self.cur_user_config.Switch.Uid or "").strip()
@@ -1700,15 +1702,8 @@ class AutoProxyTask(AutoProxyWorker):
         # 4. 账号级游戏客户端路径（临时覆盖）：MAS 先按生效路径拉起该账号的
         # 客户端，BGI 启动后 attach 运行中的游戏——不写 BGI 全局配置
         # （installPath 是全局单值，写入会污染其他跟随全局的用户）
-        if user_game_path:
-            try:
-                await self._ensure_user_game_running(user_game_path)
-            except Exception as e:
-                logger.opt(exception=True).warning(
-                    f"账号 {self.cur_user_item.name} 游戏客户端启动失败: {e}"
-                )
-                await self._push_dispatch_log(f"游戏客户端启动失败: {e}")
-                return False
+        if user_game_path and not await self._start_account_game(user_game_path):
+            return False
 
         switch_success = asyncio.Event()
         switch_result = {"success": False, "started": False}
@@ -1804,7 +1799,18 @@ class AutoProxyTask(AutoProxyWorker):
             )
         return switch_result["success"]
 
-    async def _switch_account_mas(self, user_game_path: str = "") -> bool:
+    async def _start_account_game(self, user_game_path: str) -> bool:
+        try:
+            await self._ensure_user_game_running(user_game_path)
+        except Exception as error:
+            logger.opt(exception=True).warning(
+                f"账号 {self.cur_user_item.name} 游戏启动失败: {error}"
+            )
+            await self._push_dispatch_log(f"游戏启动失败: {error}")
+            return False
+        return True
+
+    async def _switch_account_mas(self, account: str) -> bool:
         """MAS 侧强制切换账号（官服/B服）：托管启动游戏 + 前台 OCR 操控登录界面。
 
         官服：有密码走「登录其他账号 + 剪贴板输入账密」，无密码走下拉列表按
@@ -1812,22 +1818,8 @@ class AutoProxyTask(AutoProxyWorker):
         成功后游戏保持运行，与 BGI 脚本路径的收尾一致，由随后的一条龙接管。
         失败返回 False，由调用方中止任务。
         """
-        account = str(self.cur_user_config.Info.Id or "").strip()
-        if not account:
-            return True
         password = str(self.cur_user_config.Info.Password or "")
         resource = str(self.cur_user_config.Switch.Resource or "官服").strip()
-
-        # MAS 托管游戏启动（同 OK-NTE 语义）：已运行跳过，未运行按账号级路径
-        # （留空跟随 BGI 全局）拉起；游戏起不来切号无从执行，直接失败中止
-        try:
-            await self._ensure_user_game_running(user_game_path)
-        except Exception as e:
-            logger.opt(exception=True).warning(
-                f"账号 {self.cur_user_item.name} 游戏启动失败: {e}"
-            )
-            await self._push_dispatch_log(f"游戏启动失败: {e}")
-            return False
 
         await self._push_dispatch_log("正在由 MAS 前台切换账号...")
         # 切号在后台线程内同步执行，on_log 契约是同步回调；_push_dispatch_log 是
