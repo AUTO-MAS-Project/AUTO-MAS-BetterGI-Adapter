@@ -10,7 +10,7 @@ from .config import BetterGIConfig, BetterGIUserConfig
 from .manager import BetterGIExpander, BetterGIUpdateExpander
 from .tools.restore_service import RESTORE_POOLS
 
-router = APIRouter(prefix="/api/scripts")
+router = APIRouter(prefix="/api/scripts", tags=["脚本管理"])
 router.include_router(editor_router)
 
 

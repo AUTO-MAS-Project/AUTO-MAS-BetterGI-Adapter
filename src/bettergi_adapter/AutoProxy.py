@@ -495,7 +495,7 @@ class AutoProxyTask(AutoProxyWorker):
 
         return "Pass"
 
-    async def prepare(self):
+    async def prepare_account(self):
         self.bettergi_process_manager = ProcessManager(reseek_target=True)
         self.wait_event = asyncio.Event()
 
@@ -1023,7 +1023,6 @@ class AutoProxyTask(AutoProxyWorker):
         return names
 
     async def main_logic(self):
-        self._ready = True
         deadline = asyncio.timeout(self.script_config.Run.HardTimeLimit * 60)
         try:
             async with deadline:
@@ -1044,7 +1043,8 @@ class AutoProxyTask(AutoProxyWorker):
             logger.warning(message)
 
     async def run_account(self):
-        await self.prepare()
+        await self.prepare_account()
+        self._ready = True
 
         # 任务前脚本每账号一次，先于游戏更新、切号、执行层与全部重试
         await self.run_user_scripts_before()
