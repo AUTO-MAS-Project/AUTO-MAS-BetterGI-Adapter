@@ -255,3 +255,65 @@ def test_daily_team_lookup_uses_daily_domain(flag):
         )
         == "daily"
     )
+
+
+async def test_execution_failure_with_completed_daily_does_not_charge_account():
+    worker = object.__new__(AutoProxyTask)
+    worker.cur_user_config = SimpleNamespace(
+        Data=SimpleNamespace(ProxyTimes=0, LastProxyStatus=""),
+        Info=SimpleNamespace(RemainedDay=2),
+        commit=AsyncMock(),
+    )
+    worker.cur_user_item = SimpleNamespace(set_state=AsyncMock())
+    worker.run_complete = True
+    worker.partial_failed_steps = 0
+    worker.execution_failure_summary = "执行层未启动"
+    await worker._persist_user_run_result()
+    worker.cur_user_item.set_state.assert_awaited_once_with(status="部分失败")
+    assert worker.cur_user_config.Data.LastProxyStatus == "失败"
+    assert worker.cur_user_config.Data.ProxyTimes == 0
+    assert worker.cur_user_config.Info.RemainedDay == 2
+
+
+def test_restore_stygian_copy():
+    from bettergi_adapter.tools import backup_archive
+
+    sid, uid = str(uuid4()), str(uuid4())
+    old_backup = backup_archive.archive_mas_backup(
+        sid, uid, overlay={"Resource": "官服"}
+    )
+    assert old_backup is not None
+    path = backup_archive.mas_user_dir(sid, uid) / "GlobalStygian" / "settings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"team":"first"}', encoding="utf-8")
+    backup = backup_archive.archive_mas_backup(sid, uid)
+    assert backup is not None
+    path.write_text('{"team":"second"}', encoding="utf-8")
+    backup_archive.restore_mas_backup(sid, uid, backup.name)
+    assert json.loads(path.read_text(encoding="utf-8")) == {"team": "first"}
+
+    preview = backup_archive.build_mas_preview(old_backup, None)
+    assert any(
+        "保留当前设置" in row["value"]
+        for section in preview["sections"]
+        for row in section["rows"]
+    )
+    backup_archive.restore_mas_backup(sid, uid, old_backup.name)
+    assert json.loads(path.read_text(encoding="utf-8")) == {"team": "first"}
+
+
+def test_channel_detection_requires_local_client(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from bettergi_adapter.tools import game_info
+
+    def unexpected_access(*args, **kwargs):
+        pytest.fail("non-local client reached filesystem")
+
+    monkeypatch.setattr(Path, "read_text", unexpected_access)
+    monkeypatch.setattr(Path, "is_file", unexpected_access)
+    remote = "//invalid.example/test/YuanShen.exe"
+    with pytest.raises(ValueError, match="本机"):
+        game_info.detect_channel(Path(remote))
+    with pytest.raises(ValueError, match="本机"):
+        game_info.resolve_game_exe(tmp_path, remote)

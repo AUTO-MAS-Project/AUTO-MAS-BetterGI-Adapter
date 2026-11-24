@@ -690,6 +690,7 @@ class AutoProxyTask(AutoProxyWorker):
         self.exec_group_names: list[str] = []
         # 执行层「部分失败」的步数：单步失败已跳过继续、不判负，但状态/通知要标出来
         self.partial_failed_steps = 0
+        self.execution_failure_summary = ""
         self.warning_steps = 0
 
     def _resolve_log_file_path(self) -> Path:
@@ -1079,7 +1080,6 @@ class AutoProxyTask(AutoProxyWorker):
         # 与执行层无依赖，仍由随后的一条龙承接，避免执行层异常连坐吞掉日常收益
         # （2026-09-08 用户决策：记录警告但继续）。
         exec_ok = True
-        execution_failure_summary = ""
         if self.exec_group_names:
             exec_ok = await self._run_execution_layer()
             point(
@@ -1089,12 +1089,12 @@ class AutoProxyTask(AutoProxyWorker):
                 key="execution_groups",
             )
             if not exec_ok:
-                execution_failure_summary = self.cur_user_log.status
+                self.execution_failure_summary = self.cur_user_log.status
                 await self.script_info.set_log(
-                    f"{execution_failure_summary}\n执行层失败，继续执行一条龙日常"
+                    f"{self.execution_failure_summary}\n执行层失败，继续执行一条龙日常"
                 )
                 logger.warning(
-                    f"账号 {self.cur_user_item.name} {execution_failure_summary}，"
+                    f"账号 {self.cur_user_item.name} {self.execution_failure_summary}，"
                     f"记录警告并继续一条龙日常"
                 )
 
@@ -1109,7 +1109,7 @@ class AutoProxyTask(AutoProxyWorker):
                 )
             else:
                 await self.script_info.set_log(
-                    f"{execution_failure_summary}\n一条龙无启用任务，跳过"
+                    f"{self.execution_failure_summary}\n一条龙无启用任务，跳过"
                 )
             logger.info(
                 f"账号 {self.cur_user_item.name} 原生一条龙无启用任务，跳过 BetterGI 启动"
@@ -1122,8 +1122,8 @@ class AutoProxyTask(AutoProxyWorker):
         if not await self.kill_managed_process():
             await self.cur_user_item.set_state(status="异常")
             await self.script_info.set_log(
-                f"{execution_failure_summary}\n{_BGI_UNKILLABLE_HINT}"
-                if execution_failure_summary
+                f"{self.execution_failure_summary}\n{_BGI_UNKILLABLE_HINT}"
+                if self.execution_failure_summary
                 else _BGI_UNKILLABLE_HINT
             )
             logger.error(
@@ -1154,8 +1154,8 @@ class AutoProxyTask(AutoProxyWorker):
                 await self.cur_user_item.set_state(status="异常")
                 await self.cur_user_log.set_state(status=_BGI_UNKILLABLE_HINT)
                 await self.script_info.set_log(
-                    f"{execution_failure_summary}\n{_BGI_UNKILLABLE_HINT}"
-                    if execution_failure_summary
+                    f"{self.execution_failure_summary}\n{_BGI_UNKILLABLE_HINT}"
+                    if self.execution_failure_summary
                     else _BGI_UNKILLABLE_HINT
                 )
                 logger.error(
@@ -1236,8 +1236,8 @@ class AutoProxyTask(AutoProxyWorker):
                 await asyncio.sleep(10)
 
         # 原生日志和等待退出提示会替换调度正文，结束后补回执行层失败摘要。
-        if execution_failure_summary:
-            await self._push_dispatch_log(execution_failure_summary)
+        if self.execution_failure_summary:
+            await self._push_dispatch_log(self.execution_failure_summary)
 
     def _sanitize_plan_strategies(self) -> None:
         """失效 Plan 策略回退通用策略；显式填值也覆盖原生配置中的旧名称。"""
@@ -1490,6 +1490,8 @@ class AutoProxyTask(AutoProxyWorker):
                     await asyncio.wait_for(done_event.wait(), timeout=1.0)
                 except asyncio.TimeoutError:
                     pass
+                if done_event.is_set():
+                    break
                 # 已启动却查不到被跟踪的进程：可能是参数被旧单实例吞掉（新进程秒退），
                 # 也可能是 BGI 自行提权重启导致 PID 变了——按进程名复核，确实一个都不剩
                 # 才判失败，避免把「自重启」误判成退出。
@@ -2186,29 +2188,27 @@ class AutoProxyTask(AutoProxyWorker):
                     statistics["drop_statistics"] = drop_statistics
                 statistics["user_info"] = self.cur_user_item.name
                 statistics["warning_count"] = (
-                    self.partial_failed_steps + self.warning_steps
+                    self.partial_failed_steps
+                    + self.warning_steps
+                    + bool(self.execution_failure_summary)
                 )
                 start_time = getattr(self, "user_start_time", datetime.now())
                 statistics["start_time"] = start_time.strftime("%Y-%m-%d %H:%M:%S")
                 statistics["end_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                statistics["user_result"] = (
-                    "代理任务全部完成"
-                    if self.run_complete
-                    else self.cur_user_item.result
-                )
-                if self.run_complete and (
-                    self.partial_failed_steps or self.warning_steps
-                ):
-                    # 上游流程已完成；子任务失败和无法确认的检查结果仅作警告展示。
-                    statistics["user_result"] = (
+                if not self.run_complete:
+                    user_result, success_symbol = self.cur_user_item.result, "X"
+                elif self.execution_failure_summary:
+                    user_result = f"一条龙日常完成；{self.execution_failure_summary}"
+                    success_symbol = "⚠"
+                elif statistics["warning_count"]:
+                    user_result = (
                         f"代理流程完成（有警告：{self.partial_failed_steps} 个步骤失败，"
                         f"{self.warning_steps} 项需关注）"
                     )
-                success_symbol = "√" if self.run_complete else "X"
-                if self.run_complete and (
-                    self.partial_failed_steps or self.warning_steps
-                ):
                     success_symbol = "⚠"
+                else:
+                    user_result, success_symbol = "代理任务全部完成", "√"
+                statistics["user_result"] = user_result
                 # 统计通知的字段清单：用于确认分步表/掉落表这类可选区块到底有没有下发
                 logger.info(
                     f"账号 {self.cur_user_item.name} 统计通知字段: "
@@ -2232,6 +2232,12 @@ class AutoProxyTask(AutoProxyWorker):
 
     async def _persist_user_run_result(self) -> None:
         if self.cur_user_config is None:
+            return
+
+        if self.run_complete and self.execution_failure_summary:
+            self.cur_user_config.Data.LastProxyStatus = "失败"
+            await self.cur_user_config.commit()
+            await self.cur_user_item.set_state(status="部分失败")
             return
 
         if self.run_complete:

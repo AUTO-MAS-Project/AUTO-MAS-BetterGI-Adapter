@@ -43,6 +43,8 @@ from auto_mas_core.host.task_proxy_helpers import find_pids_by_name
 from auto_mas_core.host.utils import get_logger
 from auto_mas_core.host.utils import io as _utils_io
 
+from .one_dragon import is_unc_path
+
 logger = get_logger("BetterGI 游戏信息")
 
 # BetterGI 主配置相对路径（与 account_switch._BGI_CONFIG_REL_PATH 一致）
@@ -61,6 +63,8 @@ def detect_channel(game_exe: Path) -> str | None:
     - ``YuanShen.exe`` 读安装目录 ``config.ini`` 的 ``[General]``：
       ``cps`` 含 ``bilibili`` 或 ``channel=14`` → B服；``channel=1`` → 官服。
     """
+    if is_unc_path(str(game_exe)):
+        raise ValueError("游戏客户端必须使用本机路径")
     name = game_exe.name.casefold()
     if name == "genshinimpact.exe":
         return CHANNEL_GLOBAL
@@ -154,6 +158,8 @@ def resolve_game_exe(root_path: Path, user_game_path: str = "") -> Path:
                 "genshinStartConfig.installPath），请先在 BetterGI 设置中配置游戏路径"
             )
         game_exe = Path(install_path)
+    if is_unc_path(str(game_exe)):
+        raise ValueError("游戏客户端必须使用本机路径")
     if not game_exe.is_file():
         raise RuntimeError(
             f"游戏路径不存在: {game_exe}，请检查 BetterGI 设置或该账号的游戏客户端配置"

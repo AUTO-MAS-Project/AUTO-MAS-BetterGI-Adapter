@@ -16,6 +16,8 @@ for (const legacyValue of [false, true]) {
       openModeCountMin = false
       team = ''
       friendshipTeam = ''
+      useFragileResin = false
+      useTransientResin = false
 
       constructor(count, country, leyLineOutcropType) {
         Object.assign(this, { count, country, leyLineOutcropType })
@@ -43,6 +45,9 @@ for (const legacyValue of [false, true]) {
                 country: '蒙德',
                 leyLineOutcropType: '启示之花',
                 useAdventurerHandbook: legacyValue,
+                useFragileResin: String(legacyValue),
+                useTransientResin: String(legacyValue),
+                isResinExhaustionMode: String(legacyValue),
               },
             },
           ],
@@ -56,6 +61,7 @@ for (const legacyValue of [false, true]) {
     const [param] = calls
     assert.deepEqual([param.count, param.country, param.leyLineOutcropType], [3, '蒙德', '启示之花'])
     assert.equal('useAdventurerHandbook' in param, false)
+    assert.deepEqual([param.useFragileResin, param.useTransientResin, param.isResinExhaustionMode], [legacyValue, legacyValue, legacyValue])
     assert.equal(messages.at(-1), 'MAS_PLAN_DONE')
   })
 }

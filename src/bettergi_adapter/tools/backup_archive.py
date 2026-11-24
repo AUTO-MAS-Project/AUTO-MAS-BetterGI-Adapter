@@ -36,7 +36,7 @@
 
 - per-user 副本：``data/{script_id}/{user_id}/`` 下的 ``OneDragon/``
   （一条龙配置副本）、``ScriptGroup/``（配置组副本）、``GlobalDomain/``
-  （秘境刷取配置副本）——前端端点直接读写、就是页面编辑对象（对齐
+  （秘境刷取配置副本）、``GlobalStygian/``（幽境危战配置副本）——前端端点直接读写、就是页面编辑对象（对齐
   OkNte「ConfigFile 即页面编辑对象」）；shared/independent/native 都走 per-user
   副本（副本与来源无关，原生来源下前端编辑同样落盘），池**恒按账号分桶**，
   无 owner 解耦（对齐 General）。
@@ -130,7 +130,7 @@ _OVERLAY_FIELD_LABELS = {
 }
 """侧车字段中文标签（对齐 BetterGI 编辑页词表）"""
 
-_PER_USER_SUB_DIRS = ("OneDragon", "ScriptGroup", "GlobalDomain")
+_PER_USER_SUB_DIRS = ("OneDragon", "ScriptGroup", "GlobalDomain", "GlobalStygian")
 """per-user 副本子目录（前端端点直接读写、页面编辑对象）"""
 
 
@@ -169,7 +169,7 @@ def overlay_sidecar_content(overlay: dict) -> str:
 
 
 def mas_user_dir(script_id: str, user_id: str) -> Path:
-    """per-user 根目录：``data/{script_id}/{user_id}``（OneDragon/ScriptGroup/GlobalDomain 的父级）。"""
+    """per-user 根目录：``data/{script_id}/{user_id}``（OneDragon/ScriptGroup/GlobalDomain/GlobalStygian 的父级）。"""
 
     return Path.cwd() / "data" / script_id / user_id
 
@@ -183,7 +183,7 @@ def mas_backup_root(script_id: str, user_id: str) -> Path:
 def _collect_mas_files(script_id: str, user_id: str) -> dict[str, Path]:
     """收集 per-user 副本文件集（相对键保留子目录名，如 ``OneDragon/xxx.json``）。
 
-    仅收 per-user 副本三个子目录；UserData 字段与其它数据（切号脚本残留等）
+    仅收 per-user 配置副本子目录；UserData 字段与其它数据（切号脚本残留等）
     不属于副本内容，不进备份。
     """
 
@@ -244,7 +244,7 @@ def restore_mas_backup(
     """把账号池归档恢复到 per-user 副本（恢复前自动归档当前，误恢复可找回）。
 
     恢复走基座 ``restore_files`` 的 replace 语义：受管副本子目录
-    （OneDragon/ScriptGroup/GlobalDomain）整棵替换为备份时点内容，副本内
+    （OneDragon/ScriptGroup/GlobalDomain/GlobalStygian）整棵替换为备份时点内容，副本内
     备份之外的残留一并清理，恢复结果与备份完全一致；per-user 根目录其余
     内容（切号脚本残留等）原样保留。侧车与模式标注不写回副本，侧车读回
     供调用方回填 UserData 后即分离删除。
@@ -525,11 +525,14 @@ def build_mas_preview(backup_dir: Path, overlay: dict | None) -> dict:
         for rel, path in _utils_config_archive.dir_files(backup_dir).items()
         if rel not in _utils_config_archive.META_FILE_NAMES | {OVERLAY_SIDECAR_NAME}
     }
-    if files:
-        file_rows = [
-            {"key": rel, "value": f"{size} B"} for rel, size in sorted(files.items())
-        ]
-        sections.append({"name": "copies", "label": "账号配置副本", "rows": file_rows})
+    file_rows = [
+        {"key": rel, "value": f"{size} B"} for rel, size in sorted(files.items())
+    ]
+    if "GlobalStygian/settings.json" not in files:
+        file_rows.append(
+            {"key": "幽境危战", "value": "此备份未包含该配置，恢复时保留当前设置"}
+        )
+    sections.append({"name": "copies", "label": "账号配置副本", "rows": file_rows})
     return {"sections": sections}
 
 

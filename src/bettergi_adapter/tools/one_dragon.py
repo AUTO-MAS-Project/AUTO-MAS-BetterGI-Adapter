@@ -158,7 +158,7 @@ def list_auto_boss_strategies(root: Path) -> list[str]:
     return options
 
 
-def _is_unc_path(text: str) -> bool:
+def is_unc_path(text: str) -> bool:
     """UNC 路径（``\\\\server\\share`` / ``//server/share``）。
 
     对 UNC 调 ``is_file()`` 会让 Windows 主动连该 SMB 服务器并可能泄露 NTLM 凭据，
@@ -210,7 +210,7 @@ def strategy_file_exists(
     text = (name or "").strip().replace("\\", "/")
     if not text or text == builtin:
         return True
-    if _is_unc_path(text):
+    if is_unc_path(text):
         return False
     rel = Path(text)
     if rel.is_absolute():
@@ -241,7 +241,7 @@ def resolve_combat_strategy_path(
     text = (name or "").strip().replace("\\", "/")
     if not text or text == _AUTO_BOSS_BUILTIN_STRATEGY:
         return None
-    if _is_unc_path(text):
+    if is_unc_path(text):
         return None
     rel = Path(text)
     if rel.is_absolute():

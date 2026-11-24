@@ -275,7 +275,7 @@ async function dispatchCombat(step) {
       p.partyName = partyName || "";
       if (domainName) p.domainName = domainName;
       if (reward != null) p.sundaySelectedValue = String(reward);
-      if (s.autoArtifactSalvage != null) p.autoArtifactSalvage = !!s.autoArtifactSalvage;
+      if (s.autoArtifactSalvage != null) p.autoArtifactSalvage = toBool(s.autoArtifactSalvage) === true;
       if (s.maxArtifactStar != null) p.maxArtifactStar = String(s.maxArtifactStar);
       // 用上面规范化后的值，确保与轮数换算取到同一个模式
       if (s.specifyResinUse != null) p.specifyResinUse = specifyResinUse;
@@ -341,15 +341,15 @@ async function dispatchCombat(step) {
         country || "",
         leyLineOutcropType || ""
       );
-      if (s.isResinExhaustionMode != null) p.isResinExhaustionMode = !!s.isResinExhaustionMode;
-      if (s.openModeCountMin != null) p.openModeCountMin = !!s.openModeCountMin;
+      if (s.isResinExhaustionMode != null) p.isResinExhaustionMode = toBool(s.isResinExhaustionMode) === true;
+      if (s.openModeCountMin != null) p.openModeCountMin = toBool(s.openModeCountMin) === true;
       // 新版 BGI 已移除此参数，存量 Plan 中的残留值不再传入。
       // 「跳过准备流程」(LeyLineOneDragonMode) 因 BGI 未向 JS 暴露注入点，在 MAS 接管路径
       // 下无效，已从右栏移除；此处不再消费该键（如将来 BGI 提供注入点可在此补回）。
       // 地脉花无原生超时，不兜底（前端默认 0=不限制）；仅当显式 >0 时透传。
       if (s.timeout != null && s.timeout > 0) p.timeout = s.timeout;
-      if (s.useFragileResin != null) p.useFragileResin = !!s.useFragileResin;
-      if (s.useTransientResin != null) p.useTransientResin = !!s.useTransientResin;
+      if (s.useFragileResin != null) p.useFragileResin = toBool(s.useFragileResin) === true;
+      if (s.useTransientResin != null) p.useTransientResin = toBool(s.useTransientResin) === true;
       // 队伍无条件赋值：空 = 不切换队伍（BGI AutoLeyLineOutcropTask 仅在 Team 非空时切队）。
       // 不能用 `if (team)` 守卫跳过——那会留下 Param 构造时 SetDefault() 从全局
       // AutoLeyLineOutcropConfig.Team 读来的旧值。
@@ -391,8 +391,8 @@ async function dispatchCombat(step) {
       // maxArtifactStar），直接赋值会抛 "no suitable property or field" 并中断整个
       // 执行层（实机 0.64.1-alpha.1 已复现）。统一走 setProp 静默跳过并打标记。
       if (s.bossNum != null) setProp(p, "bossNum", s.bossNum);
-      if (s.autoArtifactSalvage != null) setProp(p, "autoArtifactSalvage", !!s.autoArtifactSalvage);
-      if (s.specifyResinUse != null) setProp(p, "specifyResinUse", !!s.specifyResinUse);
+      if (s.autoArtifactSalvage != null) setProp(p, "autoArtifactSalvage", toBool(s.autoArtifactSalvage) === true);
+      if (s.specifyResinUse != null) setProp(p, "specifyResinUse", toBool(s.specifyResinUse) === true);
       if (s.originalResinUseCount != null) setProp(p, "originalResinUseCount", s.originalResinUseCount);
       if (s.condensedResinUseCount != null) setProp(p, "condensedResinUseCount", s.condensedResinUseCount);
       if (s.transientResinUseCount != null) setProp(p, "transientResinUseCount", s.transientResinUseCount);
@@ -445,15 +445,15 @@ async function dispatchCombat(step) {
       // 队伍配置表「战斗场景」选队结果优先级最高（压过步骤级 teamName）
       const bossTeam = s.masTeamOverride || s.teamName;
       setProp(p, "teamName", bossTeam || "");
-      if (s.specifyRunCount != null) setProp(p, "specifyRunCount", !!s.specifyRunCount);
+      if (s.specifyRunCount != null) setProp(p, "specifyRunCount", toBool(s.specifyRunCount) === true);
       if (s.runCount != null) setProp(p, "runCount", s.runCount);
-      if (s.useTransientResin != null) setProp(p, "useTransientResin", !!s.useTransientResin);
-      if (s.useFragileResin != null) setProp(p, "useFragileResin", !!s.useFragileResin);
+      if (s.useTransientResin != null) setProp(p, "useTransientResin", toBool(s.useTransientResin) === true);
+      if (s.useFragileResin != null) setProp(p, "useFragileResin", toBool(s.useFragileResin) === true);
       // Plan 存量键为 rviveRetryCount（后端 RIGHTBAR_TO_PLAN 历史拼写），新键 reviveRetryCount 兼容
       const reviveRetry = s.rviveRetryCount != null ? s.rviveRetryCount : s.reviveRetryCount;
       if (reviveRetry != null) setProp(p, "reviveRetryCount", reviveRetry);
-      if (s.returnToStatueAfterEachRound != null) setProp(p, "returnToStatueAfterEachRound", !!s.returnToStatueAfterEachRound);
-      if (s.rewardRecognitionEnabled != null) setProp(p, "rewardRecognitionEnabled", !!s.rewardRecognitionEnabled);
+      if (s.returnToStatueAfterEachRound != null) setProp(p, "returnToStatueAfterEachRound", toBool(s.returnToStatueAfterEachRound) === true);
+      if (s.rewardRecognitionEnabled != null) setProp(p, "rewardRecognitionEnabled", toBool(s.rewardRecognitionEnabled) === true);
       if (s.timeout != null) setProp(p, "timeout", s.timeout);
       // 首领讨伐策略存于 s.strategyName（由右栏 AutoBossStrategyName 映射而来）；
       // 其余组策略走 s.combatStrategyPath。两者取其一经 setCombatStrategyPath 按策略名重算路径。
