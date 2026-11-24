@@ -174,17 +174,6 @@ def build_execution_segments(
     ):
         return []
 
-    # 多实例：实例名（组名-{行uid}）→ 基名。与 write_user_one_dragon / materialize 同规则，
-    # 供 resolve_custom_group 回退到基名副本 / 按基名在 BGI 目录解析资产。
-    instance_base: dict[str, str] = {}
-    for entry in queue or []:
-        if not isinstance(entry, dict):
-            continue
-        entry_name = str(entry.get("name") or "").strip()
-        entry_step = str(entry.get("step") or "").strip()
-        if entry_name and entry_step and entry_step != entry_name:
-            instance_base[entry_step] = entry_name
-
     segments: list[dict[str, Any]] = []
     combat_placed = False
 
@@ -199,7 +188,7 @@ def build_execution_segments(
         if not isinstance(entry, dict):
             continue
         name = str(entry.get("name") or "").strip()
-        if not name or not entry.get("enabled", True):
+        if not name or not entry["enabled"]:
             continue
         base = resolve_base_name(name)
         if base in BUILTIN_COMBAT_STEPS:
@@ -217,9 +206,8 @@ def build_execution_segments(
         kind = str(entry.get("kind") or "")
         if kind not in custom_kinds:
             continue
-        group = resolve_custom_group(
-            root_path, script_id, user_id, name, instance_base.get(name) or name
-        )
+        instance = str(entry.get("step") or "").strip() or name
+        group = resolve_custom_group(root_path, script_id, user_id, instance, name)
         projects = group.get("projects") if isinstance(group, dict) else None
         if not isinstance(projects, list) or not projects:
             continue

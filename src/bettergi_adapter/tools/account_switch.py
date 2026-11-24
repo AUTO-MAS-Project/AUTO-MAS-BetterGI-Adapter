@@ -339,23 +339,16 @@ def write_switch_group(
 
 
 def scrub_switch_group(root_path: Path) -> None:
-    """运行结束后脱敏切换账号配置组，清空密码并把账号置为打码形式。
-
-    切号脚本执行时必须写入明文账号/密码供 OCR/键鼠登录，但完成后不应让明文
-    凭据残留磁盘。本函数把 ``jsScriptSettingsObject`` 的 ``password`` 清空、
-    ``username`` 还原为打码（下拉列表模式本已是打码，OCR 模式的完整账号被抹掉）。
-    """
+    """清空 MAS 切号配置组中的登录凭据；无法脱敏时移除该临时组。"""
     out_path = root_path / _SCRIPT_GROUP_REL_DIR / f"{GROUP_NAME}.json"
-    data = _utils_io.read_file(out_path)
-    if not isinstance(data, dict):
+    if not out_path.exists():
         return
-    for proj in data.get("projects") or []:
-        if not isinstance(proj, dict):
-            continue
-        settings = proj.get("jsScriptSettingsObject")
-        if not isinstance(settings, dict):
-            continue
-        settings["password"] = ""
-        settings["username"] = mask_account(str(settings.get("username") or ""))
-    _utils_io.write_file(out_path, data)
-    logger.info(f"已脱敏切换账号配置组: {out_path}")
+    try:
+        data = _utils_io.read_file(out_path)
+        for project in data["projects"]:
+            settings = project["jsScriptSettingsObject"]
+            settings.update(username="", password="")
+        _utils_io.write_file(out_path, data)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        out_path.unlink(missing_ok=True)
+    logger.info(f"已清除切换账号配置组中的登录凭据: {out_path}")

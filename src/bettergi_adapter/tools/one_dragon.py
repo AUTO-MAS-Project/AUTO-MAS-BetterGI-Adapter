@@ -1702,7 +1702,7 @@ def write_native_one_dragon(
     config = read_file(path)
     if not isinstance(config, dict) or not config:
         return None
-    config = apply_groups(
+    config, _ = apply_groups(
         config,
         list(groups) if groups else _enabled_builtin_names(config),
         custom_groups=custom_groups,
@@ -1767,7 +1767,7 @@ def write_user_one_dragon(
     exclude_task_names: list[str] | None = None,
     boss_reward_recognition: bool | None = None,
     materialize_custom_groups: bool = True,
-) -> list[Path]:
+) -> tuple[list[Path], list[dict[str, Any]]]:
     """把组开关与队伍/策略设置应用到一条龙配置，写入 BGI 运行时槽位并缓存 per-user 副本。
 
     ⚠️ 前提：同一脚本同一时刻至多一个 BetterGI 任务在运行（调度与使用方式保证）；
@@ -1797,8 +1797,7 @@ def write_user_one_dragon(
     否则自定义组原样保留（由 BetterGI 内部决定）。
 
     Returns:
-        本次物化到 BGI 的配置组文件路径列表（供调用方在运行结束后
-        ``remove_materialized_script_groups`` + ``remove_one_dragon_slot`` 清理）。
+        待清理的物化配置组路径，以及已解析每项启停状态的执行队列。
     """
     config_name = _MAS_ONE_DRAGON_SLOT_NAME
     user_path = per_user_one_dragon_path(script_id, user_id, config_name)
@@ -1808,18 +1807,19 @@ def write_user_one_dragon(
         # 缓存缺失/为空：以纯内置模板开始（不回退 BGI 实配，实配不是权威源）
         config = load_seed_template()
 
-    config = apply_groups(
+    config, execution_queue = apply_groups(
         config,
         groups,
         custom_groups=custom_groups,
         manage_customs=manage_custom_groups,
         queue=queue,
     )
-    if exclude_task_names:
-        config = _exclude_tasks(config, exclude_task_names)
+    # 副本保留完整启停状态，下次运行旧队列仍可读取。仅从运行时槽位排除已交由执行层的任务。
     # 副本只保存一条龙结构与组开关（不含顶部快捷覆盖，避免清空后残留旧值）
     write_file(user_path, config)
-    slot_config = dict(config)
+    slot_config = (
+        _exclude_tasks(config, exclude_task_names) if exclude_task_names else config
+    )
     # 顶部快捷覆盖只作用于运行时槽位：非空才写，留空则槽位维持副本（BetterGI 现有）值
     if daily_reward_party_name:
         slot_config["DailyRewardPartyName"] = daily_reward_party_name
@@ -1897,7 +1897,7 @@ def write_user_one_dragon(
     write_one_dragon(root, _MAS_ONE_DRAGON_SLOT_NAME, slot_config)
     owner_path.parent.mkdir(parents=True, exist_ok=True)
     owner_path.write_text(script_id, encoding="utf-8")
-    return materialized
+    return materialized, execution_queue
 
 
 def _global_config_path(root: Path) -> Path:
@@ -2759,7 +2759,7 @@ def apply_groups(
     custom_groups: list[dict[str, Any]] | None = None,
     manage_customs: bool = False,
     queue: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """按组名切换一条龙配置的组开关，保留其余设置。
 
     按钮是「开关」而非删减：对每个内置组在 ``TaskEnabledList`` 里置 ``true/false``，
@@ -2788,7 +2788,7 @@ def apply_groups(
         queue: 可视化队列（有序条目），见 ``parse_one_dragon_queue``；空时回退旧行为。
 
     Returns:
-        修改后的配置 dict（浅拷贝，原 ``config`` 不变）。
+        修改后的配置及执行队列。队列中每项的开关与写入配置的值一致。
     """
     config = dict(config or {})
     selected = [n for n in enabled if n in _BUILTIN_ONE_DRAGON_GROUPS]
@@ -2813,8 +2813,8 @@ def apply_groups(
         if name and name not in old_by_name:
             old_by_name[name] = (uid, bool(old_enabled.get(uid, True)))
 
-    def _custom_enabled_for(name: str) -> bool:
-        old = old_by_name.get(name)
+    def _custom_enabled_for(name: str, instance: str = "") -> bool:
+        old = old_by_name.get(instance) or old_by_name.get(name)
         old_on = bool(old[1]) if old else True
         if manage_customs:
             # 入表按表状态；未入表保持 BetterGI 原启用状态，避免误开用户已关闭的组
@@ -2827,6 +2827,7 @@ def apply_groups(
     new_enabled: dict[str, bool] = {}
     present_builtin: set[str] = set()
 
+    execution_queue = []
     if queue_entries:
         # 队列模式：按可视化队列顺序重建（允许同名重复实例，各占独立 uid）
         for entry in queue_entries:
@@ -2863,7 +2864,8 @@ def apply_groups(
                 new_enabled[uid] = bool(entry["enabled"])
             else:
                 # 存量数据无 per-instance enabled：回退按名查自定义组管理表
-                new_enabled[uid] = _custom_enabled_for(name)
+                new_enabled[uid] = _custom_enabled_for(name, step)
+            execution_queue.append({**entry, "enabled": new_enabled[uid]})
     else:
         # 旧行为：单遍扫描旧顺序，内置组按按钮开关置 enabled，自定义组按管理表/原样保留
         for uid in old_order:
@@ -2913,7 +2915,7 @@ def apply_groups(
     config["TaskDefinitions"] = new_defs
     config["TaskOrder"] = new_order
     config["TaskEnabledList"] = new_enabled
-    return config
+    return config, execution_queue
 
 
 # 模块加载时预解析设置项默认值（供右栏渲染缺省值）

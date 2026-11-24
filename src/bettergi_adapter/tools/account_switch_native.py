@@ -60,6 +60,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from contextvars import ContextVar
 from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -92,6 +93,26 @@ logger = get_logger("BetterGI 账号切换")
 # 另一个在滚轮翻页，最终把隐私政策文档页都点了出来）。非阻塞获取，抢不到
 # 直接响亮失败，不排队。
 _SWITCH_LOCK = threading.Lock()
+
+# asyncio.to_thread 会继承本次切号的停止信号；分身在独立进程中执行。
+_stop_event: ContextVar[threading.Event | None] = ContextVar(
+    "bgi_switch_stop", default=None
+)
+
+
+def _check_stop() -> None:
+    event = _stop_event.get()
+    if event is not None and event.is_set():
+        raise asyncio.CancelledError
+
+
+def _wait(seconds: float) -> None:
+    event = _stop_event.get()
+    if event is None:
+        time.sleep(seconds)
+    elif event.wait(seconds):
+        raise asyncio.CancelledError
+
 
 # 诊断文件（debug/bgi-account-switch/switch-detail-*.log）：记录切换过程各步骤
 # OCR 文本，供用户反馈登录失败时对照定位识别漂移；切换串行独占前台，单例写入。
@@ -259,6 +280,7 @@ _CHECK_VAL_MIN = 120
 
 def _genshin_process_alive() -> bool:
     """是否仍有原神本地客户端进程存活（窗口等待期的快速失败判定）。"""
+    _check_stop()
     return any(find_pids_by_name(name) for name in _GENSHIN_PROCESS_NAMES)
 
 
@@ -299,6 +321,7 @@ def _find_game_hwnd(*, wait: bool = True, allow_relaunch: bool = False) -> int:
 
 
 def _activate_window(hwnd: int) -> None:
+    _check_stop()
     _game_window.activate_window(hwnd, label=_WINDOW_LABEL)
 
 
@@ -309,12 +332,14 @@ def _client_size(hwnd: int) -> tuple[int, int]:
 
 
 def _capture_window_image(hwnd: int, *, activate: bool = True) -> Image.Image:
+    _check_stop()
     return _game_window.capture_window_image(
         hwnd, label=_WINDOW_LABEL, activate=activate
     )
 
 
 def _capture_window(hwnd: int, *, activate: bool = True) -> np.ndarray:
+    _check_stop()
     return _game_window.capture_window(hwnd, label=_WINDOW_LABEL, activate=activate)
 
 
@@ -354,10 +379,12 @@ def _click_box(
 
         original_position = pyautogui.position()
         try:
+            _check_stop()
             pyautogui.moveTo(screen_x, screen_y)
-            time.sleep(0.3)
+            _wait(0.3)
+            _check_stop()
             pyautogui.click()
-            time.sleep(after_sleep)
+            _wait(after_sleep)
         finally:
             pyautogui.moveTo(*original_position)
 
@@ -368,8 +395,9 @@ def _click_point(hwnd: int, px: int, py: int, *, after_sleep: float = 0.3) -> No
 
 def _press_escape(hwnd: int, *, after_sleep: float = 1.5) -> None:
     _activate_window(hwnd)
+    _check_stop()
     pyautogui.press("esc")
-    time.sleep(after_sleep)
+    _wait(after_sleep)
 
 
 def _scroll_list(hwnd: int, point: tuple[int, int] = _LIST_SCROLL_POINT) -> None:
@@ -380,10 +408,12 @@ def _scroll_list(hwnd: int, point: tuple[int, int] = _LIST_SCROLL_POINT) -> None
         client_x = round(px * width / _FRAME_WIDTH)
         client_y = round(py * height / _FRAME_HEIGHT)
         screen_x, screen_y = win32gui.ClientToScreen(hwnd, (client_x, client_y))
+        _check_stop()
         pyautogui.moveTo(screen_x, screen_y)
-        time.sleep(0.2)
+        _wait(0.2)
+        _check_stop()
         pyautogui.scroll(-3)
-        time.sleep(0.5)
+        _wait(0.5)
 
 
 # ── OCR 文本判定辅助 ─────────────────────────────────────────────────────
@@ -410,7 +440,7 @@ def _wait_ocr_text(
         box = _find_text(_read_texts(hwnd, roi), keywords)
         if box is not None:
             return box
-        time.sleep(1)
+        _wait(1)
     return None
 
 
@@ -482,6 +512,7 @@ def _clipboard_copy_and_paste(text: str) -> None:
     """
     if not IS_WINDOWS:
         raise RuntimeError("账号切换仅支持 Windows 平台")
+    _check_stop()
     win32clipboard.OpenClipboard()
     try:
         win32clipboard.EmptyClipboard()
@@ -492,8 +523,9 @@ def _clipboard_copy_and_paste(text: str) -> None:
         except Exception:
             pass
     try:
+        _check_stop()
         pyautogui.hotkey("ctrl", "v")
-        time.sleep(0.8)
+        _wait(0.8)
     finally:
         # 粘贴完成后立即清空，避免明文账密残留在系统剪贴板
         try:
@@ -670,7 +702,7 @@ def _wait_until_state(
         if iter_count % 5 == 0:
             on_log("原神仍在启动/加载过渡帧或游戏内，继续等待目标界面...")
         iter_count += 1
-        time.sleep(_IN_GAME_POLL_INTERVAL)
+        _wait(_IN_GAME_POLL_INTERVAL)
     raise RuntimeError(
         "等待原神目标界面超时：长时间无进展或超过硬上限"
         f"（{_IN_GAME_UPDATE_TIMEOUT:g}s），请人工确认游戏状态后重试"
@@ -775,9 +807,9 @@ def _open_login_dialog(hwnd: int, on_log: Callable[[str], None]) -> None:
             if confirm is not None:
                 # 「退出并保留登录记录」单选默认不在选中态，未选中先点选
                 _click_checkbox_near_text(hwnd, keep, expect_checked=True)
-                time.sleep(0.5)
+                _wait(0.5)
                 break
-        time.sleep(1)
+        _wait(1)
 
     if confirm is None:
         raise RuntimeError(
@@ -864,17 +896,17 @@ def _select_and_enter(hwnd: int, account: str, on_log: Callable[[str], None]) ->
     max_retries = 3
     for attempt in range(1, max_retries + 1):
         _activate_window(hwnd)
-        time.sleep(1)
+        _wait(1)
         _expand_account_list(hwnd, on_log)
-        time.sleep(0.5)
+        _wait(0.5)
         if _click_target_account(hwnd, pattern, on_log):
-            time.sleep(1)
+            _wait(1)
             if _detect_field_account(hwnd, pattern):
                 on_log(f"已选中目标账号 {mask_account(account)}")
                 break
         if attempt < max_retries:
             on_log(f"账号选择结果未确认，重试（{attempt}/{max_retries}）")
-            time.sleep(1)
+            _wait(1)
         else:
             raise RuntimeError(
                 "下拉列表选号失败：登录记录中未确认到目标账号，已重试 3 次；"
@@ -929,7 +961,7 @@ def _input_credentials(
         _click_point(hwnd, *_FORM_ACCOUNT_POINT, after_sleep=0.5)
     _clipboard_copy_and_paste(account)
 
-    time.sleep(1)
+    _wait(1)
     on_log("正在输入密码")
     items = _read_texts(hwnd)
     password_field = _find_text(items, ("输入密码",))
@@ -950,7 +982,7 @@ def _input_credentials(
     # 勾选《用户协议》和《隐私政策》：勾选圆点在「同意」文本左侧且命中框小
     # （用户实测点偏会误触《用户协议》链接、打开隐私政策文档页）——按候选偏移
     # 逐个点击并用橙色填充验证，命中即停，避免盲点
-    time.sleep(1)
+    _wait(1)
     on_log("正在勾选《用户协议》和《隐私政策》")
     agree = _find_text(_read_texts(hwnd), ("同意",))
     if agree is None:
@@ -1085,7 +1117,7 @@ def _wait_login_success(
                 return
         else:
             absent_count = 0
-        time.sleep(1)
+        _wait(1)
     raise RuntimeError("等待登录完成超时（登录界面未消失），可能账密有误或网络异常")
 
 
@@ -1145,7 +1177,7 @@ def _click_bili_agree(hwnd: int, on_log: Callable[[str], None]) -> None:
             if _find_text(_read_texts(hwnd), _BILI_PRIVACY_TEXTS) is None:
                 on_log("隐私政策提示已关闭")
                 return
-            time.sleep(1)
+            _wait(1)
     raise RuntimeError("隐私政策提示未能关闭（点击「同意」未生效），请人工确认后重试")
 
 
@@ -1173,7 +1205,7 @@ def _open_bili_panel_from_title(hwnd: int, on_log: Callable[[str], None]) -> Non
                     _click_box(hwnd, confirm, after_sleep=2)
                     confirmed = True
                     continue
-            time.sleep(1)
+            _wait(1)
         on_log("登录记录面板未打开，重试点击切换账号图标")
     raise RuntimeError(
         "点击切换账号图标后登录记录面板未打开（已重试 3 次），请人工确认当前处于标题界面"
@@ -1264,15 +1296,15 @@ def _select_bili_account(
     max_retries = 3
     for attempt in range(1, max_retries + 1):
         _activate_window(hwnd)
-        time.sleep(1)
+        _wait(1)
         _expand_bili_list(hwnd, on_log)
-        time.sleep(0.5)
+        _wait(0.5)
         card_row_y = _bili_card_row_y(hwnd)
         for page in range(6):
             box = _find_bili_account(hwnd, nickname, exclude_y=card_row_y)
             if box is not None:
                 _click_box(hwnd, box, after_sleep=1)
-                time.sleep(1)
+                _wait(1)
                 # 回读当前账号卡片行确认已选中目标（列表收起后卡片显示目标昵称）
                 confirmed = any(
                     _nickname_match_ratio(t, nickname) >= _BILI_NICKNAME_THRESHOLD
@@ -1340,7 +1372,7 @@ def _wait_bili_panel_closed(hwnd: int, on_log: Callable[[str], None]) -> None:
                 return
         else:
             absent_count = 0
-        time.sleep(1)
+        _wait(1)
     raise RuntimeError(
         "点击登录后登录记录面板未关闭（登录可能未生效），请人工确认后重试"
     )
@@ -1366,7 +1398,7 @@ def _enter_game(hwnd: int, on_log: Callable[[str], None]) -> None:
         if _find_text(_read_texts(hwnd), _TITLE_TEXTS) is not None:
             appeared = True
             break
-        time.sleep(1)
+        _wait(1)
     if not appeared:
         on_log("未见标题界面，游戏应已自行进入主世界")
         return
@@ -1382,7 +1414,7 @@ def _enter_game(hwnd: int, on_log: Callable[[str], None]) -> None:
             if _find_text(_read_texts(hwnd), _TITLE_TEXTS) is None:
                 on_log("游戏已离开标题界面，进入主世界")
                 return
-            time.sleep(1)
+            _wait(1)
     raise RuntimeError(
         "点击「点击进入」后游戏未进入主世界（标题界面未消失），请人工确认后重试"
     )
@@ -1551,8 +1583,8 @@ def account_switch(
                 pass
             raise
     finally:
-        _SWITCH_LOCK.release()
         _DIAGNOSTIC_PATH = None
+        _SWITCH_LOCK.release()
     logger.success(f"原神账号切换成功：{display}")
     return True
 
@@ -1583,9 +1615,11 @@ def _dismiss_screensaver() -> None:
                 or not running.value
             ):
                 break
+            _check_stop()
             pyautogui.moveTo(x + offset, y)
             offset = -offset
-            time.sleep(1)
+            _wait(1)
+        _check_stop()
         pyautogui.moveTo(x, y)
     except Exception as error:
         logger.warning(f"退出屏幕保护程序失败（忽略，继续切号流程）: {error}")
@@ -1613,6 +1647,26 @@ async def async_switch_account(
             },
             on_log,
         )
-    return await asyncio.to_thread(
-        account_switch, account, password, resource=resource, on_log=on_log
-    )
+    stop = threading.Event()
+    token = _stop_event.set(stop)
+    try:
+        worker = asyncio.create_task(
+            asyncio.to_thread(
+                account_switch, account, password, resource=resource, on_log=on_log
+            )
+        )
+    finally:
+        _stop_event.reset(token)
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        stop.set()
+        # 重复停止也必须等到输入动作结束、剪贴板清理和互斥锁释放。
+        while not worker.done():
+            try:
+                await asyncio.wait([worker])
+            except asyncio.CancelledError:
+                continue
+        if not worker.cancelled():
+            worker.exception()
+        raise

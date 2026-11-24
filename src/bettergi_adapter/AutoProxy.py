@@ -752,24 +752,26 @@ class AutoProxyTask(AutoProxyWorker):
                     self.one_dragon_queue, CUSTOM_EXEC_KINDS
                 )
             )
-        self._materialized_script_groups = one_dragon.write_user_one_dragon(
-            self.script_root_path,
-            self.script_info.script_id,
-            self.cur_user_item.user_id,
-            self.one_dragon_groups,
-            daily_reward_party_name=str(
-                self.cur_user_config.OneDragon.DailyRewardPartyName or ""
-            ),
-            party_name=party_name,
-            auto_boss_strategy_name=str(
-                self.cur_user_config.OneDragon.AutoBossStrategyName or ""
-            ),
-            custom_groups=self.one_dragon_custom_groups,
-            manage_custom_groups=self.use_custom_groups,
-            queue=self.one_dragon_queue,
-            exclude_task_names=sorted(_exclude) or None,
-            boss_reward_recognition=True if self.drop_statistics_enabled else None,
-            materialize_custom_groups=not self.custom_exec_enabled,
+        self._materialized_script_groups, execution_queue = (
+            one_dragon.write_user_one_dragon(
+                self.script_root_path,
+                self.script_info.script_id,
+                self.cur_user_item.user_id,
+                self.one_dragon_groups,
+                daily_reward_party_name=str(
+                    self.cur_user_config.OneDragon.DailyRewardPartyName or ""
+                ),
+                party_name=party_name,
+                auto_boss_strategy_name=str(
+                    self.cur_user_config.OneDragon.AutoBossStrategyName or ""
+                ),
+                custom_groups=self.one_dragon_custom_groups,
+                manage_custom_groups=self.use_custom_groups,
+                queue=self.one_dragon_queue,
+                exclude_task_names=sorted(_exclude) or None,
+                boss_reward_recognition=True if self.drop_statistics_enabled else None,
+                materialize_custom_groups=not self.custom_exec_enabled,
+            )
         )
         # 执行层「段」：按左栏队列顺序切段并写入 BGI 配置组（战斗段 + 自定义项同批），
         # 随后由 ``_run_execution_layer`` 用**一次** ``--startGroups <段名...>`` 顺序跑完。
@@ -783,7 +785,7 @@ class AutoProxyTask(AutoProxyWorker):
                     root_path=self.script_root_path,
                     script_id=self.script_info.script_id,
                     user_id=self.cur_user_item.user_id,
-                    queue=self.one_dragon_queue or [],
+                    queue=execution_queue,
                     plan_steps=self.exec_plan_steps,
                     custom_kinds=CUSTOM_EXEC_KINDS,
                     default_strategy_path=self.default_strategy_path,
@@ -976,30 +978,19 @@ class AutoProxyTask(AutoProxyWorker):
         finally:
             self._reseed_global_config = None
 
-    def _native_one_dragon_has_tasks(self) -> bool | None:
-        """原生一条龙（阶段2）是否还有任何启用任务。
-
-        路径 B 下战斗组已被执行层接管并从原生副本剔除，若日常/自定义组也都关，
-        启用任务数即为 0。此时再启动 ``startOneDragon`` 会让 BetterGI 空跑且不退出，
-        导致任务挂死。读实际写好的原生配置，按 ``TaskEnabledList`` 判定是否有活可干。
-
-        Returns:
-            True/False 表示有无启用任务；配置读不出来时返回 None，由调用方按失败处理，
-            不与「真的没有启用任务」混为一谈。
-        """
+    def _native_one_dragon_has_tasks(self) -> bool:
+        """读取本轮要运行的配置，只有有效的启用表可以判定为空任务。"""
+        name = self.launch_config_name
         try:
-            cfg = one_dragon.load_one_dragon(
-                self.script_root_path, self.launch_config_name
-            )
-        except (OSError, ValueError, KeyError, TypeError) as e:
-            logger.opt(exception=True).warning(
-                f"账号 {self.cur_user_item.name} 一条龙配置读取失败: {e}"
-            )
-            return None
-        enabled = cfg.get("TaskEnabledList") if isinstance(cfg, dict) else None
-        if not isinstance(enabled, dict):
-            return False
-        return any(bool(v) for v in enabled.values())
+            cfg = one_dragon.load_one_dragon(self.script_root_path, name)
+        except (OSError, ValueError) as error:
+            raise ValueError(f"无法读取一条龙配置「{name}」：{error}") from error
+        flags = cfg.get("TaskEnabledList")
+        if not isinstance(flags, dict) or not all(
+            isinstance(v, bool) for v in flags.values()
+        ):
+            raise ValueError(f"一条龙配置「{name}」缺失或任务启用表无效")
+        return any(flags.values())
 
     def _native_one_dragon_task_names(self) -> list[str]:
         """本次启动的一条龙配置里「启用的一条龙内置任务」名（按 ``TaskOrder`` 顺序）。
@@ -1650,10 +1641,10 @@ class AutoProxyTask(AutoProxyWorker):
         script_missing = not account_switch.switch_script_dir(
             self.script_root_path
         ).is_dir()
+        script_present = account_switch.ensure_switch_subscription(
+            self.script_root_path, sync_update=script_missing
+        )
         try:
-            script_present = account_switch.ensure_switch_subscription(
-                self.script_root_path, sync_update=script_missing
-            )
             account_switch.write_switch_group(
                 self.script_root_path,
                 account,
@@ -1663,14 +1654,14 @@ class AutoProxyTask(AutoProxyWorker):
                 servers,
                 uid,
             )
-        except Exception as e:
-            logger.opt(exception=True).warning(f"切换账号准备失败: {e}")
-            await self._push_dispatch_log(f"切换账号准备失败: {e}")
-            # write_switch_group 可能已写入明文凭据后抛异常，失败路径同样脱敏，避免明文残留磁盘
-            with suppress(Exception):
-                account_switch.scrub_switch_group(self.script_root_path)
-            return False
+            return await self._run_switch_group(script_present, user_game_path)
+        finally:
+            account_switch.scrub_switch_group(self.script_root_path)
 
+    async def _run_switch_group(
+        self, script_present: bool, user_game_path: str
+    ) -> bool:
+        """在临时凭据有效期间准备并执行 BGI 切号组。"""
         await self._push_dispatch_log(
             f"开始切换账号: --startGroups {account_switch.GROUP_NAME}"
         )
@@ -1795,9 +1786,6 @@ class AutoProxyTask(AutoProxyWorker):
         finally:
             await switch_monitor.stop()
             await self.kill_managed_process()
-            # 切号结束即脱敏配置组，避免明文账号/密码残留磁盘
-            with suppress(Exception):
-                account_switch.scrub_switch_group(self.script_root_path)
             # BGI 确实启动并退出过：记录脚本是否已检出，仍缺失则留下标记供下一轮
             # 强制重建仓库；BGI 根本没起来时不记录，避免因启动失败误删用户仓库
             if switch_result["started"]:
