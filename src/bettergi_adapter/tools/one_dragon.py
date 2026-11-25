@@ -1340,6 +1340,12 @@ def _asset_parts(name: str) -> tuple[str, ...]:
     return path.parts
 
 
+def _valid_group_reference(name: str, base: str) -> bool:
+    return bool(_asset_parts(name) and _asset_parts(base)) and not (
+        is_switch_group(name) or is_switch_group(base)
+    )
+
+
 def _asset_file(root: Path, directory: Path, name: str) -> Path | None:
     parts = _asset_parts(name)
     if not parts:
@@ -1353,8 +1359,8 @@ def _asset_file(root: Path, directory: Path, name: str) -> Path | None:
                 getattr(info, "st_file_attributes", 0)
                 & stat.FILE_ATTRIBUTE_REPARSE_POINT
             ):
-                return None
-    except (OSError, ValueError):
+                raise ValueError("配置组资源目录含链接，已停止读取")
+    except (FileNotFoundError, NotADirectoryError):
         return None
     return path if stat.S_ISREG(info.st_mode) else None
 
@@ -1527,8 +1533,8 @@ def resolve_custom_group(
     解析不到（无副本且 BGI 目录也无同名资产）返回空 ``{}``，由调用方决定回退基名或跳过。
     3)~5) 会顺手把生成的单项目配置组写入 per-user 副本（与旧物化行为一致：右栏能提前看到内容）。
     """
-    if not _asset_parts(name) or not _asset_parts(base) or is_switch_group(base):
-        return {}
+    if not _valid_group_reference(name, base):
+        raise ValueError("无效的配置组资源引用")
     copy = _read_per_user_copy(script_id, user_id, name)
     if not (isinstance(copy, dict) and copy) and base != name:
         copy = _read_per_user_copy(script_id, user_id, base)
@@ -1557,10 +1563,7 @@ def resolve_custom_group(
         return copy
 
     # 引用 BGI 已有配置组：以 BGI 实配为底稿（BGI 只认基名，故按 base 读取）
-    try:
-        existing = read_script_group(root, base)
-    except ValueError:
-        existing = {}
+    existing = read_script_group(root, base)
     return existing if isinstance(existing, dict) and existing else {}
 
 
@@ -1924,9 +1927,7 @@ def write_user_one_dragon(
     # 多实例：实例名（组名-{行uid}）→ 基名 的映射，供物化回退到基名副本/实配，
     # 以及按基名在 BGI 目录（JsScript/AutoPathing/KeyMouseScript/ScriptGroup）解析。
     _instance_base: dict[str, str] = {}
-    for _e in queue or []:
-        if not isinstance(_e, dict):
-            continue
+    for _e in execution_queue:
         _n = str(_e.get("name") or "").strip()
         _s = str(_e.get("step") or "").strip()
         if _n and _s and _s != _n:
@@ -2893,6 +2894,7 @@ def apply_groups(
     present_builtin: set[str] = set()
 
     execution_queue = []
+    rejected_names: set[str] = set()
     if queue_entries:
         # 队列模式：按可视化队列顺序重建（允许同名重复实例，各占独立 uid）
         for entry in queue_entries:
@@ -2910,6 +2912,9 @@ def apply_groups(
                 if name in _BUILTIN_ONE_DRAGON_GROUPS
                 else str(entry.get("step") or "").strip()
             )
+            if not _valid_group_reference(step or name, name):
+                rejected_names.add(step or name)
+                continue
             new_defs[uid] = step or name
             new_order.append(uid)
             if name in _BUILTIN_ONE_DRAGON_GROUPS:
@@ -2980,6 +2985,13 @@ def apply_groups(
     config["TaskDefinitions"] = new_defs
     config["TaskOrder"] = new_order
     config["TaskEnabledList"] = new_enabled
+    # 旧副本及自定义组管理表也可能补回任务。写原生配置前把拒绝项从三份索引一起移除。
+    rejected_names.update(
+        name for name in new_defs.values() if not _valid_group_reference(name, name)
+    )
+    if rejected_names:
+        _exclude_tasks(config, list(rejected_names))
+        logger.warning("已从一条龙配置排除无效的资源引用")
     return config, execution_queue
 
 

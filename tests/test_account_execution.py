@@ -416,5 +416,20 @@ def test_queue_assets_stay_within_their_own_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(one_dragon, "_read_per_user_copy", unexpected)
     monkeypatch.setattr(type(tmp_path), "lstat", unexpected)
     for name in ("../outside", "/outside", "Z:/outside", "name:stream"):
-        assert one_dragon.resolve_custom_group(tmp_path, sid, uid, name, name) == {}
+        with pytest.raises(ValueError, match="无效"):
+            one_dragon.resolve_custom_group(tmp_path, sid, uid, name, name)
         assert one_dragon._keymouse_file_for(tmp_path, name) is None
+
+
+def test_native_slot_excludes_rejected_references_but_keeps_valid_fallback(tmp_path):
+    sid, uid = str(uuid4()), str(uuid4())
+    slots = [
+        {"kind": "scriptgroup", "name": "regular", "enabled": True},
+        {"kind": "pathing", "name": "../outside", "step": "copy-2", "enabled": True},
+    ]
+    one_dragon.write_user_one_dragon(tmp_path, sid, uid, [], queue=slots)
+    saved = one_dragon.load_one_dragon(tmp_path, one_dragon.launch_slot_name())
+    definitions = saved["TaskDefinitions"]
+    assert "regular" in definitions.values()
+    assert not {"../outside", "copy-2"}.intersection(definitions.values())
+    assert set(saved["TaskOrder"]) == set(definitions) == set(saved["TaskEnabledList"])
