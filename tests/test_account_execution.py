@@ -401,3 +401,20 @@ def test_group_editor_limits_fields_and_keeps_upstream_extensions(
     assert (
         api_service.read_script_group(sid, uid, name=account_switch.GROUP_NAME) is None
     )
+
+
+def test_queue_assets_stay_within_their_own_directory(tmp_path, monkeypatch):
+    sid, uid = str(uuid4()), str(uuid4())
+    nested = tmp_path / "User" / "AutoPathing" / "routes" / "daily.json"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("{}", encoding="utf-8")
+    assert one_dragon._pathing_file_for(tmp_path, "routes/daily") == "routes/daily.json"
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("invalid queue reference reached file access")
+
+    monkeypatch.setattr(one_dragon, "_read_per_user_copy", unexpected)
+    monkeypatch.setattr(type(tmp_path), "lstat", unexpected)
+    for name in ("../outside", "/outside", "Z:/outside", "name:stream"):
+        assert one_dragon.resolve_custom_group(tmp_path, sid, uid, name, name) == {}
+        assert one_dragon._keymouse_file_for(tmp_path, name) is None

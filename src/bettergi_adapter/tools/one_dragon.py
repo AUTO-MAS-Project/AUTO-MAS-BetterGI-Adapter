@@ -35,9 +35,10 @@ UUID 是每实例随机生成的临时标识，因此本模块按组名识别与
 
 import hashlib
 import json
+import stat
 import threading
 import uuid
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from auto_mas_core.host.utils import get_logger
@@ -357,9 +358,10 @@ def read_script_group(root: Path, name: str) -> dict[str, Any]:
     """
     if not is_file_safe_script_group_name(name) or is_switch_group(name):
         return {}
-    sg_dir = root / _SCRIPT_GROUP_REL_DIR
-    path = sg_dir / f"{resolve_script_group_name(name)}.json"
-    if path.resolve() == (sg_dir / f"{ACCOUNT_SWITCH_GROUP}.json").resolve():
+    path = _asset_file(
+        root, _SCRIPT_GROUP_REL_DIR, f"{resolve_script_group_name(name)}.json"
+    )
+    if path is None or is_switch_group(path.resolve().stem):
         return {}
     data = read_file(path)
     return data if isinstance(data, dict) else {}
@@ -423,11 +425,10 @@ def list_script_settings_ui(root: Path, folder: str) -> list[dict[str, Any]]:
     目录缺失或文件非法返回空列表。
     """
     folder = (folder or "").strip()
-    if not folder or any(c in folder for c in ("/", "\\", "..")):
+    if len(_asset_parts(folder)) != 1:
         return []
-    js_dir = root / _JS_SCRIPT_REL_DIR / folder
-    settings = js_dir / "settings.json"
-    if not settings.is_file():
+    settings = _asset_file(root, _JS_SCRIPT_REL_DIR, f"{folder}/settings.json")
+    if settings is None:
         return []
     try:
         raw = settings.read_text(encoding="utf-8", errors="replace").removeprefix(
@@ -1322,6 +1323,53 @@ def _default_script_group_config() -> dict[str, Any]:
     }
 
 
+def _asset_parts(name: str) -> tuple[str, ...]:
+    """解析队列中的资源引用，只接受安装目录内的相对文件名或子路径。"""
+    if not isinstance(name, str) or not name:
+        return ()
+    path = PureWindowsPath(name)
+    if path.anchor or any(
+        part == ".."
+        or part.endswith((".", " "))
+        or PureWindowsPath(part).is_reserved()
+        or any(c in part for c in '<>:"|?*')
+        or any(ord(c) < 32 for c in part)
+        for part in path.parts
+    ):
+        return ()
+    return path.parts
+
+
+def _asset_file(root: Path, directory: Path, name: str) -> Path | None:
+    parts = _asset_parts(name)
+    if not parts:
+        return None
+    path = root
+    try:
+        for part in (*directory.parts, *parts):
+            path = path / part
+            info = path.lstat()
+            if stat.S_ISLNK(info.st_mode) or (
+                getattr(info, "st_file_attributes", 0)
+                & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            ):
+                return None
+    except (OSError, ValueError):
+        return None
+    return path if stat.S_ISREG(info.st_mode) else None
+
+
+def _json_asset_name(root: Path, directory: Path, name: str) -> str | None:
+    if not _asset_parts(name):
+        return None
+    for candidate in (
+        (name,) if name.lower().endswith(".json") else (name, f"{name}.json")
+    ):
+        if _asset_file(root, directory, candidate) is not None:
+            return candidate
+    return None
+
+
 def _keymouse_file_for(root: Path, name: str) -> str | None:
     """若 ``name`` 命中 BetterGI KeyMouseScript 目录下的录制文件，返回其完整文件名（含 .json）。
 
@@ -1329,14 +1377,7 @@ def _keymouse_file_for(root: Path, name: str) -> str | None:
     ``.json`` 时直接命中，未带时补 ``.json`` 再试。命中则返回用于 project 的 ``name``/
     ``folderName``（即该文件名），否则返回 ``None``。
     """
-    km_dir = root / _KEY_MOUSE_SCRIPT_REL_DIR
-    candidate = km_dir / name
-    if candidate.is_file():
-        return name
-    with_json = f"{name}.json" if not name.endswith(".json") else name
-    if (km_dir / with_json).is_file():
-        return with_json
-    return None
+    return _json_asset_name(root, _KEY_MOUSE_SCRIPT_REL_DIR, name)
 
 
 def _make_keymouse_script_group(name: str, rec_file: str) -> dict[str, Any]:
@@ -1371,12 +1412,9 @@ def _js_script_file_for(root: Path, name: str) -> str | None:
     一条龙 TaskDefinitions 引用 JS 脚本时用其文件夹名；命中即返回，供物化为仅含单个
     Javascript 项目的配置组，使「脚本」队列项可经 ``--startGroups`` 执行层运行。
     """
-    if not isinstance(name, str) or not name:
+    if len(_asset_parts(name)) != 1:
         return None
-    js_dir = root / _JS_SCRIPT_REL_DIR / name
-    if js_dir.is_dir() and (js_dir / "main.js").is_file():
-        return name
-    return None
+    return name if _asset_file(root, _JS_SCRIPT_REL_DIR, f"{name}/main.js") else None
 
 
 def _pathing_file_for(root: Path, name: str) -> str | None:
@@ -1385,16 +1423,7 @@ def _pathing_file_for(root: Path, name: str) -> str | None:
     一条龙 TaskDefinitions 引用地图追踪时用其文件名；命中即返回，供物化为仅含单个
     Pathing 项目的配置组，使「路径」队列项可经 ``--startGroups`` 执行层运行。
     """
-    if not isinstance(name, str) or not name:
-        return None
-    pt_dir = root / _AUTO_PATHING_REL_DIR
-    candidate = pt_dir / name
-    if candidate.is_file():
-        return name
-    with_json = f"{name}.json" if not name.endswith(".json") else name
-    if (pt_dir / with_json).is_file():
-        return with_json
-    return None
+    return _json_asset_name(root, _AUTO_PATHING_REL_DIR, name)
 
 
 def _make_js_script_group(name: str) -> dict[str, Any]:
@@ -1498,6 +1527,8 @@ def resolve_custom_group(
     解析不到（无副本且 BGI 目录也无同名资产）返回空 ``{}``，由调用方决定回退基名或跳过。
     3)~5) 会顺手把生成的单项目配置组写入 per-user 副本（与旧物化行为一致：右栏能提前看到内容）。
     """
+    if not _asset_parts(name) or not _asset_parts(base) or is_switch_group(base):
+        return {}
     copy = _read_per_user_copy(script_id, user_id, name)
     if not (isinstance(copy, dict) and copy) and base != name:
         copy = _read_per_user_copy(script_id, user_id, base)
