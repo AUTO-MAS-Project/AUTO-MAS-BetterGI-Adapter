@@ -2953,7 +2953,7 @@ def apply_groups(
                 new_enabled[uid] = _custom_enabled_for(name)
 
     # 兜底：不在队列/旧顺序里的自定义组不丢失（按名去重，追加到末尾）
-    covered_names = set(new_defs.values())
+    covered_names = set(new_defs.values()) | rejected_names
     for uid, name in old_defs.items():
         if (
             name
@@ -2976,7 +2976,7 @@ def apply_groups(
     # 管理开启时：入表且启用但配置里缺失的自定义组：补建并启用
     if manage_customs:
         for name, on in custom_enabled.items():
-            if on and name not in new_defs.values():
+            if on and name not in new_defs.values() and name not in rejected_names:
                 uid = str(uuid.uuid4())
                 new_defs[uid] = name
                 new_order.append(uid)
@@ -2986,11 +2986,11 @@ def apply_groups(
     config["TaskOrder"] = new_order
     config["TaskEnabledList"] = new_enabled
     # 旧副本及自定义组管理表也可能补回任务。写原生配置前把拒绝项从三份索引一起移除。
-    rejected_names.update(
+    invalid_names = [
         name for name in new_defs.values() if not _valid_group_reference(name, name)
-    )
-    if rejected_names:
-        _exclude_tasks(config, list(rejected_names))
+    ]
+    if invalid_names or rejected_names:
+        _exclude_tasks(config, invalid_names)
         logger.warning("已从一条龙配置排除无效的资源引用")
     return config, execution_queue
 

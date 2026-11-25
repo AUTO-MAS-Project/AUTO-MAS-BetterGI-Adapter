@@ -433,3 +433,15 @@ def test_native_slot_excludes_rejected_references_but_keeps_valid_fallback(tmp_p
     assert "regular" in definitions.values()
     assert not {"../outside", "copy-2"}.intersection(definitions.values())
     assert set(saved["TaskOrder"]) == set(definitions) == set(saved["TaskEnabledList"])
+
+
+def test_rejected_alias_does_not_remove_a_valid_queue_entry(tmp_path):
+    sid, uid = str(uuid4()), str(uuid4())
+    rows = [
+        {"kind": "scriptgroup", "name": "retired.", "step": "daily-2"},
+        {"kind": "scriptgroup", "name": "daily-2", "enabled": True},
+    ]
+    _, queue = one_dragon.write_user_one_dragon(tmp_path, sid, uid, [], queue=rows)
+    native = one_dragon.load_one_dragon(tmp_path, one_dragon.launch_slot_name())
+    assert list(native["TaskDefinitions"].values()).count("daily-2") == 1
+    assert [row["name"] for row in queue] == ["daily-2"]
