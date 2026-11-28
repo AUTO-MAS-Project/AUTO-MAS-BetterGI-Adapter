@@ -25,7 +25,16 @@ Issues = "https://github.com/AUTO-MAS-Project/AUTO-MAS-BetterGI-Adapter/issues"
 where = ["src"]
 
 [tool.setuptools.package-data]
-bettergi_adapter = ["py.typed", "resources/*.json", "resources/OneDragon/*.json", "resources/MASOneDragon/*.json", "resources/MASOneDragon/*.js"]
+bettergi_adapter = [
+    "py.typed",
+    "resources/*.json",
+    "resources/OneDragon/*.json",
+    "resources/MASOneDragon/*.json",
+    "resources/MASOneDragon/*.js",
+    "ui/*",
+    "ui/**/*",
+    "i18n/*.json",
+]
 
 [tool.auto-mas]
 bundled = true

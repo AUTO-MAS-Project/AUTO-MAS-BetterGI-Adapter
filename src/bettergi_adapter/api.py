@@ -23,14 +23,17 @@ from typing import (
     Literal,
     Optional,
 )
+from uuid import UUID
 
+from auto_mas_core.host.core import TaskManager
 from auto_mas_core.host.models_schema import (
     ComboBoxItem,
     ComboBoxOut,
     OutBase,
 )
+from auto_mas_core.host.task_client import client_executable_path
 from auto_mas_core.host.utils import get_logger
-from fastapi import APIRouter, Body, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import (
     BaseModel,
     Field,
@@ -1146,3 +1149,69 @@ async def get_bettergi_game_info_api(
             status="error",
             message=f"{type(e).__name__}: {str(e)}",
         )
+
+
+panel_router = APIRouter(prefix="/editor", include_in_schema=False)
+
+
+def _editor_account(script_id: UUID, user_id: UUID):
+    from .api_service import _bettergi_script_config
+
+    try:
+        script = _bettergi_script_config(str(script_id))
+        user = script.users[user_id]
+    except (KeyError, TypeError) as error:
+        raise HTTPException(404, "BetterGI 账号不存在") from error
+    return script, user
+
+
+@panel_router.get("/user/{script_id}/{user_id}")
+async def get_editor_context(script_id: UUID, user_id: UUID):
+    script, user = _editor_account(script_id, user_id)
+    path = client_executable_path(user)
+    return {
+        "base": user.Info.Base,
+        "rootConfigured": script.Info.RootPath is not None,
+        "gamePath": str(path) if path is not None else "",
+        "plan": user.OneDragon.Plan,
+    }
+
+
+@panel_router.post("/user/{script_id}/{user_id}/update")
+async def start_game_update(script_id: UUID, user_id: UUID):
+    _editor_account(script_id, user_id)
+    try:
+        task_id = await TaskManager.start_maintenance(str(user_id))
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(409, str(error)) from error
+    return {"taskId": str(task_id)}
+
+
+def _game_update_snapshot(script_id: UUID, user_id: UUID, task_id: UUID):
+    _editor_account(script_id, user_id)
+    tree = TaskManager.get_task(task_id)
+    if tree is not None:
+        for script in tree["scripts"]["data"].values():
+            if script["info"]["script_id"] == str(script_id) and any(
+                user["info"]["user_id"] == str(user_id)
+                for user in script["users"]["data"].values()
+            ):
+                return {
+                    "status": tree["info"]["status"],
+                    "detail": tree["info"]["result"],
+                    "log": script["current"]["log"][-200_000:],
+                }
+    raise HTTPException(404, "BetterGI 更新任务不存在")
+
+
+@panel_router.get("/user/{script_id}/{user_id}/update/{task_id}")
+async def get_game_update(script_id: UUID, user_id: UUID, task_id: UUID):
+    return _game_update_snapshot(script_id, user_id, task_id)
+
+
+@panel_router.post("/user/{script_id}/{user_id}/update/{task_id}/stop")
+async def stop_game_update(script_id: UUID, user_id: UUID, task_id: UUID):
+    snapshot = _game_update_snapshot(script_id, user_id, task_id)
+    if snapshot["status"] in ("pending", "running"):
+        await TaskManager.stop(task_id)
+    return _game_update_snapshot(script_id, user_id, task_id)
