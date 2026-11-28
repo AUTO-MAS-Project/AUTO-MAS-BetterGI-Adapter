@@ -4,14 +4,19 @@ from auto_mas_core import Config, ScriptAdapterPlugin, ScriptTypeDecl, TaskMode
 from auto_mas_core.host.utils import IS_ELEVATED
 from fastapi import APIRouter
 
+from .api import panel_router
 from .api import router as editor_router
 from .api_service import prepare_user_update
 from .config import BetterGIConfig, BetterGIUserConfig
 from .manager import BetterGIExpander, BetterGIUpdateExpander
 from .tools.restore_service import RESTORE_POOLS
 
-router = APIRouter(prefix="/api/scripts", tags=["脚本管理"])
-router.include_router(editor_router)
+router = APIRouter()
+router.include_router(editor_router, prefix="/api/scripts", tags=["脚本管理"])
+router.include_router(
+    editor_router, prefix="/api/plugin/bettergi_adapter", include_in_schema=False
+)
+router.include_router(panel_router, prefix="/api/plugin/bettergi_adapter")
 
 
 def supports_desktop_session(config):

@@ -1,0 +1,5 @@
+{
+  "manifestVersion": 1,
+  "pages": { "user": { "web": { "entry": "user.html", "panelApi": 1 } } },
+  "bindings": []
+}

@@ -23,16 +23,26 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from typing import Annotated, Literal
+from pathlib import Path
+from typing import Annotated, Literal, cast
 
-from auto_mas_core import ScriptEntry, UserEntry
+from auto_mas_core import (
+    DeclarativeBlock,
+    HostBlock,
+    PluginBlock,
+    ScriptEntry,
+    UserEntry,
+)
 from auto_mas_core.host.config import (
     ConfigCollection,
     ConfigGroup,
+    FieldChangeEvent,
+    UiVisibility,
     Virtual,
     collection,
     encrypted,
     legacy,
+    ui,
     virtual_field,
 )
 from auto_mas_core.host.config_hints import migrate_legacy_fields
@@ -73,6 +83,16 @@ class DesktopSessionRunFields(ConfigGroup):
 class BetterGIUserConfig(UserEntry):
     "BetterGI 账号配置（更好的原神）"
 
+    ui_native_session = "config"
+    ui_blocks = (
+        HostBlock("config_restore"),
+        HostBlock("native_session"),
+        DeclarativeBlock(("Info",)),
+        PluginBlock(page_id="user", fallback_groups=("Switch", "Task", "OneDragon")),
+        DeclarativeBlock(("Notify",)),
+        HostBlock("webhooks"),
+    )
+
     class DataFields(AccountRunFields, AccountRunStatusFields): ...
 
     Data: DataFields = Field(default_factory=DataFields)
@@ -87,6 +107,7 @@ class BetterGIUserConfig(UserEntry):
                 name="Mode",
                 convert=_utils_constants.normalize_base_source,
             ),
+            ui(options=["independent", "native"]),
         ] = Field(
             default_factory=lambda: "independent",
             description="base 来源（shared=共享/independent=独立/native=原生）",
@@ -96,7 +117,7 @@ class BetterGIUserConfig(UserEntry):
             description="账号", default_factory=lambda: ""
         )
 
-        IfQuickConfig: bool = Field(
+        IfQuickConfig: Annotated[bool, ui(visibility=UiVisibility.HIDE)] = Field(
             default_factory=lambda: True,
             description="是否启用覆写常规配置（与配置来源独立，按账号保存）",
         )
@@ -319,9 +340,28 @@ class BetterGIUserConfig(UserEntry):
             type(self).normalize_payload(payload), regenerate_uuids=regenerate_uuids
         )
 
+    @staticmethod
+    async def apply_config_source(
+        user: BetterGIUserConfig, event: FieldChangeEvent
+    ) -> None:
+        """来源切换时同步运行路径使用的旧开关。"""
+        user.Info.IfQuickConfig = event.value != "native"
+        await user.commit()
+
+
+BetterGIUserConfig.connect(
+    BetterGIUserConfig.apply_config_source, phase="runtime", group="Info", field="Base"
+)
+
 
 class BetterGIConfig(ScriptEntry):
     "BetterGI 配置（更好的原神，原生 GUI 原生来源 + 仅一条龙任务）"
+
+    ui_blocks = (
+        DeclarativeBlock(("Info",)),
+        HostBlock("game_binding"),
+        DeclarativeBlock(("Run", "Game", "Update")),
+    )
 
     class UpdateFields(ConfigGroup):
         TakeoverEnabled: bool = Field(
@@ -343,7 +383,10 @@ class BetterGIConfig(ScriptEntry):
             default_factory=lambda: True, description="任务结束后关闭游戏"
         )
 
-        Controller: Literal["电脑端-前台", "电脑端-云原神", "电脑端-桌面分身"] = Field(
+        Controller: Annotated[
+            Literal["电脑端-前台", "电脑端-云原神", "电脑端-桌面分身"],
+            ui(visibility=UiVisibility.DISABLE),
+        ] = Field(
             default_factory=lambda: "电脑端-前台",
             description="控制器（游戏控制方式：电脑端-前台 / 电脑端-云原神 / 电脑端-桌面分身） ⚠️ 预留字段：当前运行时不读取（BetterGI 自行管理游戏控制），云原神 / 桌面分身 尚未开发。为将来支持而保留占位并持久化，恒为默认「电脑端-前台」，勿被判定死代码误删。",
         )
@@ -422,3 +465,15 @@ class BetterGIConfig(ScriptEntry):
         await super()._activate_from_payload(
             type(self).normalize_payload(payload), regenerate_uuids=regenerate_uuids
         )
+
+    @staticmethod
+    def validate_root_path(_script: BetterGIConfig, event: FieldChangeEvent) -> None:
+        """保留原编辑页对 BetterGI 安装目录的检查。"""
+        path = cast(Path | None, event.value)
+        if path is not None and not (path / "BetterGI.exe").is_file():
+            raise ValueError("所选目录中没有 BetterGI.exe")
+
+
+BetterGIConfig.connect(
+    BetterGIConfig.validate_root_path, phase="runtime", group="Info", field="RootPath"
+)
